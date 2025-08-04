@@ -1,194 +1,299 @@
 <!DOCTYPE html>
-<html lang="ar" dir="rtl">
+<html lang="ar">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>رفع الملفات إلى GitHub</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            max-width: 800px;
-            margin: 0 auto;
-            padding: 20px;
-            text-align: center;
-        }
-        .container {
-            margin-top: 30px;
-        }
-        .file-input {
-            margin: 20px 0;
-        }
-        button {
-            background-color: #2ea44f;
-            color: white;
-            border: none;
-            padding: 10px 20px;
-            font-size: 16px;
-            cursor: pointer;
-            border-radius: 5px;
-            margin: 10px;
-        }
-        button:hover {
-            background-color: #2c974b;
-        }
-        .status {
-            margin-top: 20px;
-            padding: 10px;
-            border-radius: 5px;
-        }
-        .success {
-            background-color: #d4edda;
-            color: #155724;
-        }
-        .error {
-            background-color: #f8d7da;
-            color: #721c24;
-        }
-    </style>
+  <meta charset="UTF-8">
+  <title>خريطة مكاتب الصرافة + نظام ملاحة</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#d32f2f">
+
+  <!-- Leaflet -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+  <!-- Routing -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine/dist/leaflet-routing-machine.css" />
+  <script src="https://unpkg.com/leaflet-routing-machine/dist/leaflet-routing-machine.min.js"></script>
+
+  <!-- SheetJS -->
+  <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+
+  <style>
+    body { margin: 0; font-family: 'Arial', sans-serif; background-color: #f5f5f5; }
+    #map { height: 80vh; }
+    #controls {
+      padding: 10px;
+      background-color: #ffffff;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      direction: rtl;
+      text-align: center;
+    }
+    select, button, input[type="file"] {
+      padding: 5px 10px;
+      font-size: 16px;
+      margin: 5px 8px 5px 0;
+      cursor: pointer;
+    }
+    .info-box {
+      font-weight: bold;
+      margin-top: 5px;
+    }
+  </style>
 </head>
 <body>
-    <h1>رفع الملفات إلى GitHub</h1>
-    
-    <div class="container">
-        <h2>اختر الملفات للرفع</h2>
-        
-        <div class="file-input">
-            <label for="governorate">ملف Governorate.json:</label>
-            <input type="file" id="governorate" accept=".json">
-        </div>
-        
-        <div class="file-input">
-            <label for="banks">ملف pal_banks.json:</label>
-            <input type="file" id="banks" accept=".json">
-        </div>
-        
-        <div>
-            <label for="repo">اسم المستودع (مثال: username/repo):</label>
-            <input type="text" id="repo" placeholder="username/repo">
-        </div>
-        
-        <div>
-            <label for="token">رمز الوصول الشخصي (Personal Access Token):</label>
-            <input type="password" id="token" placeholder="GitHub PAT">
-        </div>
-        
-        <div>
-            <label for="branch">اسم الفرع (اختياري، افتراضي main):</label>
-            <input type="text" id="branch" placeholder="main">
-        </div>
-        
-        <button id="uploadBtn">رفع الملفات</button>
-        
-        <div id="status" class="status"></div>
-    </div>
 
-    <script>
-        document.getElementById('uploadBtn').addEventListener('click', async function() {
-            const governorateFile = document.getElementById('governorate').files[0];
-            const banksFile = document.getElementById('banks').files[0];
-            const repo = document.getElementById('repo').value;
-            const token = document.getElementById('token').value;
-            const branch = document.getElementById('branch').value || 'main';
-            
-            const statusDiv = document.getElementById('status');
-            statusDiv.textContent = '';
-            statusDiv.className = 'status';
-            
-            if (!governorateFile && !banksFile) {
-                showStatus('يرجى اختيار ملف واحد على الأقل للرفع', 'error');
-                return;
-            }
-            
-            if (!repo || !token) {
-                showStatus('يرجى إدخال اسم المستودن ورمز الوصول', 'error');
-                return;
-            }
-            
-            try {
-                if (governorateFile) {
-                    await uploadFile(governorateFile, 'Governorate.json', repo, token, branch);
-                    showStatus('تم رفع Governorate.json بنجاح', 'success');
-                }
-                
-                if (banksFile) {
-                    await uploadFile(banksFile, 'pal_banks.json', repo, token, branch);
-                    showStatus('تم رفع pal_banks.json بنجاح', 'success');
-                }
-                
-                if (governorateFile && banksFile) {
-                    showStatus('تم رفع كلا الملفين بنجاح', 'success');
-                }
-            } catch (error) {
-                showStatus(`حدث خطأ: ${error.message}`, 'error');
-                console.error(error);
-            }
-        });
-        
-        async function uploadFile(file, targetFilename, repo, token, branch) {
-            const content = await readFileAsBase64(file);
-            const apiUrl = `https://api.github.com/repos/${repo}/contents/${targetFilename}`;
-            
-            // تحقق مما إذا كان الملف موجودًا بالفعل للحصول على sha
-            let sha = null;
-            try {
-                const response = await fetch(apiUrl, {
-                    headers: {
-                        'Authorization': `token ${token}`,
-                        'Accept': 'application/vnd.github.v3+json'
-                    }
-                });
-                
-                if (response.ok) {
-                    const data = await response.json();
-                    sha = data.sha;
-                }
-            } catch (error) {
-                console.log('الملف غير موجود، سيتم إنشاؤه جديدًا');
-            }
-            
-            const payload = {
-                message: `Update ${targetFilename}`,
-                content: content,
-                branch: branch
-            };
-            
-            if (sha) {
-                payload.sha = sha;
-            }
-            
-            const uploadResponse = await fetch(apiUrl, {
-                method: 'PUT',
-                headers: {
-                    'Authorization': `token ${token}`,
-                    'Accept': 'application/vnd.github.v3+json',
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(payload)
-            });
-            
-            if (!uploadResponse.ok) {
-                const errorData = await uploadResponse.json();
-                throw new Error(errorData.message || 'فشل رفع الملف');
-            }
+<div id="controls">
+  <label>اختر نوع المكتب:</label>
+  <select id="nearbySelect">
+    <option value="all">الكل</option>
+    <option value="westron">westron</option>
+    <option value="Money Gram">Money Gram</option>
+  </select>
+  <button id="nearestBtn">أقرب مكتب</button>
+  <button id="locateBtn">تحديد موقعي</button>
+  <button id="exportExcelBtn">تصدير إلى Excel</button>
+  <br><br>
+  <label>رفع ملف المحافظات (Governorate.geojson):</label>
+  <input type="file" id="governorateFile" accept=".json,.geojson" />
+  <label>رفع ملف مكاتب الصرافة (Money_Changers.json):</label>
+  <input type="file" id="moneyChangersFile" accept=".json" />
+  <div class="info-box" id="countBox">عدد المكاتب الظاهرة: ...</div>
+</div>
+
+<div id="map"></div>
+
+<script>
+if (location.protocol !== "https:" && location.hostname !== "localhost" && location.protocol !== "http:") {
+  alert("يرجى فتح الموقع من خلال سيرفر محلي أو HTTPS لكي تعمل ميزة تحديد الموقع والملاحة.");
+}
+
+const map = L.map('map').setView([32.0, 35.3], 11);
+
+// خريطة Esri World Street
+L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', {
+  attribution: '&copy; Esri & OpenStreetMap contributors',
+  maxZoom: 19
+}).addTo(map);
+
+let allPointsLayer = null;
+let allFeatures = [];
+let routingControl = null;
+let nearestMarker = null;
+let currentFiltered = [];
+
+function showFilteredPoints(filterValue) {
+  if (allPointsLayer) map.removeLayer(allPointsLayer);
+  if (routingControl) map.removeControl(routingControl);
+  if (nearestMarker) map.removeLayer(nearestMarker);
+
+  currentFiltered = filterValue === "all"
+    ? allFeatures
+    : allFeatures.filter(f => f.properties.Near_by === filterValue);
+
+  document.getElementById("countBox").textContent = "عدد المكاتب الظاهرة: " + currentFiltered.length;
+
+  allPointsLayer = L.geoJSON(currentFiltered, {
+    pointToLayer: function (feature, latlng) {
+      return L.circleMarker(latlng, {
+        radius: 6,
+        fillColor: "red",
+        color: "#000",
+        weight: 1,
+        opacity: 1,
+        fillOpacity: 0.9
+      });
+    },
+    onEachFeature: function (feature, layer) {
+      let near = feature.properties.Near_by || "غير معروف";
+      let popupContent = `<b>قريب من:</b> ${near}<br><button class="navigate-btn">ابدأ الملاحة</button>`;
+      layer.bindPopup(popupContent);
+
+      layer.on('popupopen', function () {
+        let btn = layer.getPopup().getElement().querySelector('.navigate-btn');
+        if (btn) {
+          btn.onclick = function () {
+            let coords = feature.geometry.coordinates;
+            startNavigation([coords[1], coords[0]]);
+          };
         }
-        
-        function readFileAsBase64(file) {
-            return new Promise((resolve, reject) => {
-                const reader = new FileReader();
-                reader.onload = () => {
-                    const base64String = reader.result.split(',')[1];
-                    resolve(base64String);
-                };
-                reader.onerror = reject;
-                reader.readAsDataURL(file);
-            });
+      });
+    }
+  }).addTo(map);
+
+  if (currentFiltered.length > 0) {
+    map.fitBounds(allPointsLayer.getBounds());
+  }
+}
+
+// قراءة ورفع ملف المحافظات من جهاز المستخدم
+document.getElementById('governorateFile').addEventListener('change', function(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(event) {
+    try {
+      const geojson = JSON.parse(event.target.result);
+      if (map._governorateLayer) map.removeLayer(map._governorateLayer);
+      map._governorateLayer = L.geoJSON(geojson, {
+        style: {
+          color: 'blue',
+          weight: 2,
+          fillOpacity: 0.1
         }
-        
-        function showStatus(message, type) {
-            const statusDiv = document.getElementById('status');
-            statusDiv.textContent = message;
-            statusDiv.className = `status ${type}`;
-        }
-    </script>
+      }).addTo(map);
+      map.fitBounds(map._governorateLayer.getBounds());
+    } catch(err) {
+      alert("خطأ في قراءة ملف المحافظات: " + err.message);
+    }
+  };
+  reader.readAsText(file);
+});
+
+// قراءة ورفع ملف مكاتب الصرافة من جهاز المستخدم
+document.getElementById('moneyChangersFile').addEventListener('change', function(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(event) {
+    try {
+      const data = JSON.parse(event.target.result);
+      if (!data.features) throw new Error("ملف JSON لا يحتوي على خاصية features");
+      allFeatures = data.features;
+      showFilteredPoints(document.getElementById('nearbySelect').value);
+    } catch(err) {
+      alert("خطأ في قراءة ملف مكاتب الصرافة: " + err.message);
+    }
+  };
+  reader.readAsText(file);
+});
+
+document.getElementById('nearbySelect').addEventListener('change', function () {
+  showFilteredPoints(this.value);
+});
+
+function startNavigation(destinationLatLng) {
+  if (!navigator.geolocation) {
+    alert("المتصفح لا يدعم تحديد الموقع.");
+    return;
+  }
+
+  navigator.geolocation.getCurrentPosition(function (position) {
+    const start = L.latLng(position.coords.latitude, position.coords.longitude);
+    const end = L.latLng(destinationLatLng[0], destinationLatLng[1]);
+
+    map.setView(start, 13);
+    if (routingControl) map.removeControl(routingControl);
+
+    routingControl = L.Routing.control({
+      waypoints: [start, end],
+      routeWhileDragging: false,
+      language: 'ar',
+      showAlternatives: false,
+      lineOptions: {
+        styles: [{ color: 'green', opacity: 0.9, weight: 5 }]
+      },
+      createMarker: () => null,
+      router: L.Routing.osrmv1({
+        serviceUrl: 'https://router.project-osrm.org/route/v1'
+      })
+    }).addTo(map);
+
+  }, () => {
+    alert("تعذر تحديد الموقع.");
+  });
+}
+
+document.getElementById('nearestBtn').addEventListener('click', function () {
+  if (!navigator.geolocation) {
+    alert("المتصفح لا يدعم تحديد الموقع.");
+    return;
+  }
+
+  navigator.geolocation.getCurrentPosition(function (position) {
+    const userLoc = L.latLng(position.coords.latitude, position.coords.longitude);
+
+    let nearestFeature = null;
+    let minDistance = Infinity;
+
+    currentFiltered.forEach(f => {
+      let c = f.geometry.coordinates;
+      let d = userLoc.distanceTo(L.latLng(c[1], c[0]));
+      if (d < minDistance) {
+        minDistance = d;
+        nearestFeature = f;
+      }
+    });
+
+    if (nearestFeature) {
+      let coords = nearestFeature.geometry.coordinates;
+      let target = L.latLng(coords[1], coords[0]);
+
+      if (nearestMarker) map.removeLayer(nearestMarker);
+      if (routingControl) map.removeControl(routingControl);
+
+      nearestMarker = L.marker(target).addTo(map)
+        .bindPopup(`أقرب مكتب<br>المسافة: ${(minDistance / 1000).toFixed(2)} كم`)
+        .openPopup();
+
+      routingControl = L.Routing.control({
+        waypoints: [userLoc, target],
+        routeWhileDragging: false,
+        language: 'ar',
+        showAlternatives: false,
+        lineOptions: {
+          styles: [{ color: 'green', opacity: 0.9, weight: 5 }]
+        },
+        createMarker: () => null,
+        router: L.Routing.osrmv1({
+          serviceUrl: 'https://router.project-osrm.org/route/v1'
+        })
+      }).addTo(map);
+
+      map.fitBounds(L.latLngBounds([userLoc, target]).pad(0.3));
+    }
+
+  }, () => {
+    alert("تعذر تحديد الموقع.");
+  });
+});
+
+document.getElementById('locateBtn').addEventListener('click', function () {
+  if (!navigator.geolocation) {
+    alert("المتصفح لا يدعم تحديد الموقع.");
+    return;
+  }
+
+  navigator.geolocation.getCurrentPosition(function (position) {
+    let lat = position.coords.latitude;
+    let lng = position.coords.longitude;
+    map.setView([lat, lng], 14);
+    L.marker([lat, lng]).addTo(map).bindPopup("موقعك الحالي").openPopup();
+  }, () => {
+    alert("تعذر تحديد الموقع.");
+  });
+});
+
+document.getElementById('exportExcelBtn').addEventListener('click', function () {
+  if (currentFiltered.length === 0) {
+    alert("لا توجد مكاتب لتصديرها.");
+    return;
+  }
+
+  let exportData = currentFiltered.map(f => {
+    return {
+      "الاسم": f.properties.Name || "",
+      "القريب من": f.properties.Near_by || "",
+      "العنوان": f.properties.Address || "",
+      "الهاتف": f.properties.Phone || "",
+      "الإحداثيات": f.geometry.coordinates[1].toFixed(6) + ", " + f.geometry.coordinates[0].toFixed(6)
+    };
+  });
+
+  let ws = XLSX.utils.json_to_sheet(exportData);
+  let wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "مكاتب الصرافة");
+  XLSX.writeFile(wb, "مكاتب_الصرافة.xlsx");
+});
+</script>
+
 </body>
 </html>
