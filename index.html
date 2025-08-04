@@ -2,253 +2,142 @@
 <html lang="ar">
 <head>
   <meta charset="UTF-8">
-  <title>خريطة مكاتب الصرافة + نظام ملاحة</title>
+  <title>خريطة الفروع + أقرب فرع</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="theme-color" content="#d32f2f">
 
   <!-- Leaflet -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 
-  <!-- Routing -->
+  <!-- Leaflet Routing -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine/dist/leaflet-routing-machine.css" />
   <script src="https://unpkg.com/leaflet-routing-machine/dist/leaflet-routing-machine.min.js"></script>
 
-  <!-- SheetJS -->
+  <!-- SheetJS for Excel Export -->
   <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
 
   <style>
-    body { margin: 0; font-family: 'Arial', sans-serif; background-color: #f5f5f5; }
-    #map { height: 75vh; }
+    body { margin: 0; font-family: Arial, sans-serif; direction: rtl; background: #f5f5f5; }
+    #map { height: 80vh; }
     #controls {
+      background: #fff;
       padding: 10px;
-      background-color: #ffffff;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-      direction: rtl;
       text-align: center;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
     }
-    select, button, input[type="file"], input[type="text"] {
-      padding: 5px 10px;
+    input, button {
+      padding: 6px 12px;
+      margin: 5px;
       font-size: 16px;
-      margin: 5px 8px 5px 0;
       cursor: pointer;
     }
-    .info-box {
+    .info {
       font-weight: bold;
       margin-top: 5px;
-    }
-    #distancesOutput {
-      max-height: 200px; 
-      overflow-y: auto; 
-      background: #fff; 
-      padding: 10px; 
-      margin-top:10px; 
-      border: 1px solid #ccc;
-      text-align: right;
-      white-space: pre-wrap;
-      font-family: monospace;
-    }
-    #searchResults {
-      margin-top: 5px;
-      max-height: 100px;
-      overflow-y: auto;
-      background: #fafafa;
-      border: 1px solid #ddd;
-      text-align: right;
-      direction: rtl;
-      font-size: 14px;
-    }
-    #searchResults div {
-      padding: 5px;
-      cursor: pointer;
-      border-bottom: 1px solid #eee;
-    }
-    #searchResults div:hover {
-      background-color: #e0e0e0;
     }
   </style>
 </head>
 <body>
 
 <div id="controls">
-  <label>اختر نوع المكتب:</label>
-  <select id="nearbySelect">
-    <option value="all">الكل</option>
-    <option value="westron">westron</option>
-    <option value="Money Gram">Money Gram</option>
-  </select>
-
-  <input type="text" id="searchInput" placeholder="ابحث باسم البنك هنا..." />
-
-  <button id="searchBtn">بحث</button>
-
-  <button id="nearestBtn">أقرب مكتب</button>
-  <button id="locateBtn">تحديد موقعي</button>
-  <button id="exportExcelBtn">تصدير إلى Excel</button>
-  <button id="calculateDistancesBtn">حساب المسافات بين الفروع</button>
-  <br><br>
-  <label>رفع ملف المحافظات (Governorate.geojson):</label>
-  <input type="file" id="governorateFile" accept=".json,.geojson" />
-  <label>رفع ملف مكاتب الصرافة (Money_Changers.json):</label>
-  <input type="file" id="moneyChangersFile" accept=".json" />
-  <div class="info-box" id="countBox">عدد المكاتب الظاهرة: ...</div>
-  <div id="searchResults"></div>
+  <label>رفع ملف المحافظات:</label>
+  <input type="file" id="govFile" accept=".json,.geojson" />
+  <label>رفع ملف الفروع:</label>
+  <input type="file" id="branchFile" accept=".json" />
+  <button id="nearestBtn">أقرب فرع</button>
+  <button id="exportBtn">تصدير إلى Excel</button>
+  <div class="info" id="countBox">عدد الفروع الظاهرة: ...</div>
 </div>
-
-<pre id="distancesOutput">لم يتم حساب المسافات بعد.</pre>
 
 <div id="map"></div>
 
 <script>
-if (location.protocol !== "https:" && location.hostname !== "localhost" && location.protocol !== "http:") {
-  alert("يرجى فتح الموقع من خلال سيرفر محلي أو HTTPS لكي تعمل ميزة تحديد الموقع والملاحة.");
-}
+const map = L.map('map').setView([32.0, 35.3], 9);
 
-const map = L.map('map').setView([32.0, 35.3], 11);
-
-// خريطة Esri World Street
-L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', {
-  attribution: '&copy; Esri & OpenStreetMap contributors',
-  maxZoom: 19
+// خلفية الخريطة
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 18,
+  attribution: '&copy; OpenStreetMap'
 }).addTo(map);
 
-let allPointsLayer = null;
-let allFeatures = [];
+// المتغيرات العامة
+let branchFeatures = [];
+let branchLayer = null;
 let routingControl = null;
 let nearestMarker = null;
-let currentFiltered = [];
 
-function showFilteredPoints(filterValue, features = null) {
-  if (allPointsLayer) map.removeLayer(allPointsLayer);
-  if (routingControl) map.removeControl(routingControl);
-  if (nearestMarker) map.removeLayer(nearestMarker);
-
-  if (features) {
-    currentFiltered = features;
-  } else {
-    currentFiltered = filterValue === "all"
-      ? allFeatures
-      : allFeatures.filter(f => f.properties.Near_by === filterValue);
-  }
-
-  document.getElementById("countBox").textContent = "عدد المكاتب الظاهرة: " + currentFiltered.length;
-  document.getElementById("distancesOutput").textContent = "لم يتم حساب المسافات بعد.";
-  document.getElementById("searchResults").innerHTML = "";
-
-  allPointsLayer = L.geoJSON(currentFiltered, {
-    pointToLayer: function (feature, latlng) {
-      return L.circleMarker(latlng, {
-        radius: 6,
-        fillColor: "red",
-        color: "#000",
-        weight: 1,
-        opacity: 1,
-        fillOpacity: 0.9
-      });
-    },
-    onEachFeature: function (feature, layer) {
-      let near = feature.properties.Near_by || "غير معروف";
-      let popupContent = `<b>قريب من:</b> ${near}<br><button class="navigate-btn">ابدأ الملاحة</button>`;
-      layer.bindPopup(popupContent);
-
-      layer.on('popupopen', function () {
-        let btn = layer.getPopup().getElement().querySelector('.navigate-btn');
-        if (btn) {
-          btn.onclick = function () {
-            let coords = feature.geometry.coordinates;
-            startNavigation([coords[1], coords[0]]);
-          };
-        }
-      });
-    }
-  }).addTo(map);
-
-  if (currentFiltered.length > 0) {
-    map.fitBounds(allPointsLayer.getBounds());
-  }
-}
-
-// قراءة ورفع ملف المحافظات من جهاز المستخدم
-document.getElementById('governorateFile').addEventListener('change', function(e) {
+// تحميل المحافظات
+document.getElementById('govFile').addEventListener('change', function (e) {
   const file = e.target.files[0];
   if (!file) return;
   const reader = new FileReader();
-  reader.onload = function(event) {
+  reader.onload = function (event) {
     try {
       const geojson = JSON.parse(event.target.result);
-      if (map._governorateLayer) map.removeLayer(map._governorateLayer);
-      map._governorateLayer = L.geoJSON(geojson, {
+      L.geoJSON(geojson, {
         style: {
           color: 'blue',
           weight: 2,
           fillOpacity: 0.1
         }
       }).addTo(map);
-      map.fitBounds(map._governorateLayer.getBounds());
-    } catch(err) {
+    } catch (err) {
       alert("خطأ في قراءة ملف المحافظات: " + err.message);
     }
   };
   reader.readAsText(file);
 });
 
-// قراءة ورفع ملف مكاتب الصرافة من جهاز المستخدم
-document.getElementById('moneyChangersFile').addEventListener('change', function(e) {
+// تحميل الفروع
+document.getElementById('branchFile').addEventListener('change', function (e) {
   const file = e.target.files[0];
   if (!file) return;
   const reader = new FileReader();
-  reader.onload = function(event) {
+  reader.onload = function (event) {
     try {
-      const data = JSON.parse(event.target.result);
-      if (!data.features) throw new Error("ملف JSON لا يحتوي على خاصية features");
-      allFeatures = data.features;
-      showFilteredPoints(document.getElementById('nearbySelect').value);
-    } catch(err) {
-      alert("خطأ في قراءة ملف مكاتب الصرافة: " + err.message);
+      const json = JSON.parse(event.target.result);
+      branchFeatures = json.features;
+
+      if (branchLayer) map.removeLayer(branchLayer);
+      if (routingControl) map.removeControl(routingControl);
+      if (nearestMarker) map.removeLayer(nearestMarker);
+
+      branchLayer = L.geoJSON(branchFeatures, {
+        pointToLayer: function (feature, latlng) {
+          return L.circleMarker(latlng, {
+            radius: 6,
+            fillColor: "green",
+            color: "#000",
+            weight: 1,
+            opacity: 1,
+            fillOpacity: 0.9
+          });
+        },
+        onEachFeature: function (feature, layer) {
+          let name = feature.properties.Name || "بدون اسم";
+          layer.bindPopup(`<b>الفرع:</b> ${name}`);
+        }
+      }).addTo(map);
+
+      map.fitBounds(branchLayer.getBounds());
+      document.getElementById('countBox').textContent = "عدد الفروع الظاهرة: " + branchFeatures.length;
+
+    } catch (err) {
+      alert("خطأ في قراءة ملف الفروع: " + err.message);
     }
   };
   reader.readAsText(file);
 });
 
-document.getElementById('nearbySelect').addEventListener('change', function () {
-  showFilteredPoints(this.value);
-});
-
-function startNavigation(destinationLatLng) {
+// زر أقرب فرع
+document.getElementById('nearestBtn').addEventListener('click', function () {
   if (!navigator.geolocation) {
     alert("المتصفح لا يدعم تحديد الموقع.");
     return;
   }
 
-  navigator.geolocation.getCurrentPosition(function (position) {
-    const start = L.latLng(position.coords.latitude, position.coords.longitude);
-    const end = L.latLng(destinationLatLng[0], destinationLatLng[1]);
-
-    map.setView(start, 13);
-    if (routingControl) map.removeControl(routingControl);
-
-    routingControl = L.Routing.control({
-      waypoints: [start, end],
-      routeWhileDragging: false,
-      language: 'ar',
-      showAlternatives: false,
-      lineOptions: {
-        styles: [{ color: 'green', opacity: 0.9, weight: 5 }]
-      },
-      createMarker: () => null,
-      router: L.Routing.osrmv1({
-        serviceUrl: 'https://router.project-osrm.org/route/v1'
-      })
-    }).addTo(map);
-
-  }, () => {
-    alert("تعذر تحديد الموقع.");
-  });
-}
-
-document.getElementById('nearestBtn').addEventListener('click', function () {
-  if (!navigator.geolocation) {
-    alert("المتصفح لا يدعم تحديد الموقع.");
+  if (branchFeatures.length === 0) {
+    alert("يرجى رفع ملف الفروع أولاً.");
     return;
   }
 
@@ -258,11 +147,11 @@ document.getElementById('nearestBtn').addEventListener('click', function () {
     let nearestFeature = null;
     let minDistance = Infinity;
 
-    currentFiltered.forEach(f => {
-      let c = f.geometry.coordinates;
-      let d = userLoc.distanceTo(L.latLng(c[1], c[0]));
-      if (d < minDistance) {
-        minDistance = d;
+    branchFeatures.forEach(f => {
+      let coords = f.geometry.coordinates;
+      let dist = userLoc.distanceTo(L.latLng(coords[1], coords[0]));
+      if (dist < minDistance) {
+        minDistance = dist;
         nearestFeature = f;
       }
     });
@@ -275,7 +164,7 @@ document.getElementById('nearestBtn').addEventListener('click', function () {
       if (routingControl) map.removeControl(routingControl);
 
       nearestMarker = L.marker(target).addTo(map)
-        .bindPopup(`أقرب مكتب<br>المسافة: ${(minDistance / 1000).toFixed(2)} كم`)
+        .bindPopup(`أقرب فرع<br>المسافة: ${(minDistance / 1000).toFixed(2)} كم`)
         .openPopup();
 
       routingControl = L.Routing.control({
@@ -284,7 +173,7 @@ document.getElementById('nearestBtn').addEventListener('click', function () {
         language: 'ar',
         showAlternatives: false,
         lineOptions: {
-          styles: [{ color: 'green', opacity: 0.9, weight: 5 }]
+          styles: [{ color: 'red', opacity: 0.9, weight: 5 }]
         },
         createMarker: () => null,
         router: L.Routing.osrmv1({
@@ -300,114 +189,24 @@ document.getElementById('nearestBtn').addEventListener('click', function () {
   });
 });
 
-document.getElementById('locateBtn').addEventListener('click', function () {
-  if (!navigator.geolocation) {
-    alert("المتصفح لا يدعم تحديد الموقع.");
+// زر تصدير Excel
+document.getElementById('exportBtn').addEventListener('click', function () {
+  if (branchFeatures.length === 0) {
+    alert("لا توجد بيانات لتصديرها.");
     return;
   }
 
-  navigator.geolocation.getCurrentPosition(function (position) {
-    let lat = position.coords.latitude;
-    let lng = position.coords.longitude;
-    map.setView([lat, lng], 14);
-    L.marker([lat, lng]).addTo(map).bindPopup("موقعك الحالي").openPopup();
-  }, () => {
-    alert("تعذر تحديد الموقع.");
-  });
-});
-
-document.getElementById('exportExcelBtn').addEventListener('click', function () {
-  if (currentFiltered.length === 0) {
-    alert("لا توجد مكاتب لتصديرها.");
-    return;
-  }
-
-  let exportData = currentFiltered.map(f => {
+  const exportData = branchFeatures.map(f => {
     return {
-      "الاسم": f.properties.Name || "",
-      "القريب من": f.properties.Near_by || "",
-      "العنوان": f.properties.Address || "",
-      "الهاتف": f.properties.Phone || "",
-      "الإحداثيات": f.geometry.coordinates[1].toFixed(6) + ", " + f.geometry.coordinates[0].toFixed(6)
+      "اسم الفرع": f.properties.Name || "",
+      "الإحداثيات": `${f.geometry.coordinates[1].toFixed(6)}, ${f.geometry.coordinates[0].toFixed(6)}`
     };
   });
 
   let ws = XLSX.utils.json_to_sheet(exportData);
   let wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "مكاتب الصرافة");
-  XLSX.writeFile(wb, "مكاتب_الصرافة.xlsx");
-});
-
-// حساب المسافات بين الفروع
-function calculateDistancesBetweenBranches() {
-  const output = [];
-  for (let i = 0; i < currentFiltered.length; i++) {
-    const f1 = currentFiltered[i];
-    const coord1 = L.latLng(f1.geometry.coordinates[1], f1.geometry.coordinates[0]);
-    const name1 = f1.properties.Name || `فرع ${i+1}`;
-
-    for (let j = i + 1; j < currentFiltered.length; j++) {
-      const f2 = currentFiltered[j];
-      const coord2 = L.latLng(f2.geometry.coordinates[1], f2.geometry.coordinates[0]);
-      const name2 = f2.properties.Name || `فرع ${j+1}`;
-
-      const distMeters = coord1.distanceTo(coord2);
-      output.push(`${name1} ↔ ${name2} : ${(distMeters / 1000).toFixed(3)} كم`);
-    }
-  }
-
-  if (output.length === 0) {
-    document.getElementById('distancesOutput').textContent = "لا توجد فروع كافية لحساب المسافات.";
-  } else {
-    document.getElementById('distancesOutput').textContent = output.join("\n");
-  }
-}
-
-document.getElementById('calculateDistancesBtn').addEventListener('click', calculateDistancesBetweenBranches);
-
-// إضافة وظيفة البحث بالاسم
-document.getElementById('searchBtn').addEventListener('click', function () {
-  const query = document.getElementById('searchInput').value.trim().toLowerCase();
-  const resultsDiv = document.getElementById('searchResults');
-  resultsDiv.innerHTML = '';
-
-  if (query === '') {
-    alert('يرجى إدخال نص للبحث');
-    return;
-  }
-
-  const matched = allFeatures.filter(f => {
-    const name = f.properties.Name || '';
-    return name.toLowerCase().includes(query);
-  });
-
-  if (matched.length === 0) {
-    resultsDiv.innerHTML = 'لا توجد نتائج مطابقة.';
-    return;
-  }
-
-  // عرض النتائج كمربعات اختيار
-  matched.forEach((feature, index) => {
-    const div = document.createElement('div');
-    div.textContent = feature.properties.Name || 'بدون اسم';
-    div.style.cursor = 'pointer';
-    div.title = 'انقر للذهاب إلى هذا الفرع';
-    div.addEventListener('click', () => {
-      // إظهار هذا الفرع فقط وعمل زووم عليه
-      showFilteredPoints(null, [feature]);
-      map.setView([feature.geometry.coordinates[1], feature.geometry.coordinates[0]], 16);
-    });
-    resultsDiv.appendChild(div);
-  });
-
-  // لو حبيت تعرضهم كلهم وتعمل زووم يضمهم
-  if (matched.length > 1) {
-    showFilteredPoints(null, matched);
-    const bounds = L.latLngBounds(matched.map(f => [f.geometry.coordinates[1], f.geometry.coordinates[0]]));
-    map.fitBounds(bounds);
-  } else if (matched.length === 1) {
-    map.setView([matched[0].geometry.coordinates[1], matched[0].geometry.coordinates[0]], 16);
-  }
+  XLSX.utils.book_append_sheet(wb, ws, "الفروع");
+  XLSX.writeFile(wb, "الفروع.xlsx");
 });
 </script>
 
