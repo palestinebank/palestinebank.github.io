@@ -2,111 +2,73 @@
 <html lang="ar">
 <head>
   <meta charset="UTF-8">
-  <title>رفع ملف إلى GitHub</title>
-  <style>
-    body { font-family: Arial; direction: rtl; padding: 20px; max-width: 600px; margin: auto; }
-    label { display: block; margin-top: 10px; }
-    input, button, select { width: 100%; padding: 8px; margin-top: 5px; }
-    #status { margin-top: 15px; font-weight: bold; }
-  </style>
+  <title>رفع ملفات JSON إلى GitHub</title>
 </head>
 <body>
+  <h2>رفع ملفات JSON إلى GitHub</h2>
 
-  <h2>🔼 رفع ملف إلى GitHub</h2>
+  <input type="file" id="file1" accept=".json"><br><br>
+  <input type="file" id="file2" accept=".json"><br><br>
+  <button onclick="uploadFiles()">رفع الملفات</button>
 
-  <label>GitHub Username:
-    <input type="text" id="username" placeholder="مثال: salyayed" />
-  </label>
-
-  <label>Repository Name:
-    <input type="text" id="repo" placeholder="مثال: pal-map" />
-  </label>
-
-  <label>Branch Name:
-    <input type="text" id="branch" value="main" />
-  </label>
-
-  <label>GitHub Token:
-    <input type="password" id="token" placeholder="توكن بصلاحية repo" />
-  </label>
-
-  <label>اختيار الملف لرفعه:
-    <input type="file" id="fileInput" />
-  </label>
-
-  <button onclick="uploadToGitHub()">🚀 رفع الملف</button>
-
-  <div id="status"></div>
+  <p id="status"></p>
 
   <script>
-    async function uploadToGitHub() {
-      const username = document.getElementById('username').value.trim();
-      const repo = document.getElementById('repo').value.trim();
-      const branch = document.getElementById('branch').value.trim();
-      const token = document.getElementById('token').value.trim();
-      const fileInput = document.getElementById('fileInput');
+    async function uploadFiles() {
+      const fileInputs = [document.getElementById('file1'), document.getElementById('file2')];
       const status = document.getElementById('status');
 
-      if (!username || !repo || !branch || !token || !fileInput.files.length) {
-        alert('يرجى تعبئة جميع الحقول واختيار الملف');
-        return;
-      }
+      // إعدادات GitHub
+      const username = 'اسم_المستخدم_هنا';
+      const repo = 'اسم_المستودع_هنا';
+      const branch = 'main'; // أو master
+      const token = 'ghp_ضع_هنا_التوكن_الخاص_بك';
 
-      const file = fileInput.files[0];
-      const fileName = file.name;
-      const reader = new FileReader();
+      for (const input of fileInputs) {
+        const file = input.files[0];
+        if (!file) continue;
 
-      reader.onload = async function () {
-        const content = reader.result;
-        const base64Content = btoa(content);
+        const content = await file.text();
+        const base64Content = btoa(unescape(encodeURIComponent(content)));
+        const path = file.name;
 
-        // التحقق إن كان الملف موجودًا مسبقًا للحصول على SHA
+        const url = `https://api.github.com/repos/${username}/${repo}/contents/${path}`;
+
+        // تحقق إن كان الملف موجودًا بالفعل للحصول على sha
         let sha = null;
         try {
-          const getRes = await fetch(`https://api.github.com/repos/${username}/${repo}/contents/${fileName}`, {
-            headers: { Authorization: `token ${token}` }
+          const res = await fetch(url, {
+            headers: { 'Authorization': `token ${token}` }
           });
-          if (getRes.ok) {
-            const getData = await getRes.json();
-            sha = getData.sha;
+          if (res.ok) {
+            const json = await res.json();
+            sha = json.sha;
           }
         } catch (e) {}
 
-        const payload = {
-          message: `Upload ${fileName} via browser`,
+        const body = {
+          message: `رفع الملف ${file.name}`,
           content: base64Content,
-          branch: branch
+          branch: branch,
+          ...(sha && { sha }) // إذا كان الملف موجود، نحتاج sha لتحديثه
         };
 
-        if (sha) payload.sha = sha;
+        const response = await fetch(url, {
+          method: 'PUT',
+          headers: {
+            'Authorization': `token ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(body)
+        });
 
-        const url = `https://api.github.com/repos/${username}/${repo}/contents/${fileName}`;
-
-        try {
-          const res = await fetch(url, {
-            method: 'PUT',
-            headers: {
-              Authorization: `token ${token}`,
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(payload)
-          });
-
-          if (res.ok) {
-            status.innerText = `✅ تم رفع الملف "${fileName}" بنجاح.`;
-            status.style.color = 'green';
-          } else {
-            const err = await res.json();
-            status.innerText = `❌ فشل الرفع: ${err.message}`;
-            status.style.color = 'red';
-          }
-        } catch (err) {
-          status.innerText = '❌ حدث خطأ أثناء الاتصال بـ GitHub.';
-          status.style.color = 'red';
+        if (response.ok) {
+          status.innerText += `✅ تم رفع ${file.name} بنجاح\n`;
+        } else {
+          const err = await response.json();
+          status.innerText += `❌ فشل رفع ${file.name}: ${err.message}\n`;
         }
-      };
-
-      reader.readAsBinaryString(file);
+      }
     }
   </script>
 </body>
