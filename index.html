@@ -1,88 +1,194 @@
 <!DOCTYPE html>
-<html lang="ar">
+<html lang="ar" dir="rtl">
 <head>
-  <meta charset="UTF-8">
-  <title>رفع ملفات JSON إلى GitHub</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>رفع الملفات إلى GitHub</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            text-align: center;
+        }
+        .container {
+            margin-top: 30px;
+        }
+        .file-input {
+            margin: 20px 0;
+        }
+        button {
+            background-color: #2ea44f;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            border-radius: 5px;
+            margin: 10px;
+        }
+        button:hover {
+            background-color: #2c974b;
+        }
+        .status {
+            margin-top: 20px;
+            padding: 10px;
+            border-radius: 5px;
+        }
+        .success {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+    </style>
 </head>
 <body>
-  <h2>رفع ملفات JSON إلى GitHub</h2>
+    <h1>رفع الملفات إلى GitHub</h1>
+    
+    <div class="container">
+        <h2>اختر الملفات للرفع</h2>
+        
+        <div class="file-input">
+            <label for="governorate">ملف Governorate.json:</label>
+            <input type="file" id="governorate" accept=".json">
+        </div>
+        
+        <div class="file-input">
+            <label for="banks">ملف pal_banks.json:</label>
+            <input type="file" id="banks" accept=".json">
+        </div>
+        
+        <div>
+            <label for="repo">اسم المستودع (مثال: username/repo):</label>
+            <input type="text" id="repo" placeholder="username/repo">
+        </div>
+        
+        <div>
+            <label for="token">رمز الوصول الشخصي (Personal Access Token):</label>
+            <input type="password" id="token" placeholder="GitHub PAT">
+        </div>
+        
+        <div>
+            <label for="branch">اسم الفرع (اختياري، افتراضي main):</label>
+            <input type="text" id="branch" placeholder="main">
+        </div>
+        
+        <button id="uploadBtn">رفع الملفات</button>
+        
+        <div id="status" class="status"></div>
+    </div>
 
-  <label>اختر ملفات JSON:</label><br>
-  <input type="file" id="jsonFiles" multiple accept=".json"><br><br>
-
-  <label>GitHub Username:</label><br>
-  <input type="text" id="username"><br><br>
-
-  <label>Repository Name:</label><br>
-  <input type="text" id="repo"><br><br>
-
-  <label>Branch Name (مثل: main):</label><br>
-  <input type="text" id="branch" value="main"><br><br>
-
-  <label>GitHub Token:</label><br>
-  <input type="password" id="token"><br><br>
-
-  <button onclick="uploadJSONFiles()">رفع الملفات</button>
-
-  <pre id="status" style="white-space: pre-wrap; margin-top: 20px;"></pre>
-
-  <script>
-    async function uploadJSONFiles() {
-      const files = document.getElementById('jsonFiles').files;
-      const username = document.getElementById('username').value;
-      const repo = document.getElementById('repo').value;
-      const branch = document.getElementById('branch').value;
-      const token = document.getElementById('token').value;
-      const status = document.getElementById('status');
-      status.innerText = '';
-
-      if (!username || !repo || !branch || !token) {
-        status.innerText = "⚠️ يرجى ملء جميع الحقول.";
-        return;
-      }
-
-      for (const file of files) {
-        const content = await file.text();
-        const base64Content = btoa(unescape(encodeURIComponent(content)));
-        const path = file.name;
-
-        const url = `https://api.github.com/repos/${username}/${repo}/contents/${path}`;
-
-        let sha = null;
-        try {
-          const check = await fetch(url, {
-            headers: { 'Authorization': `token ${token}` }
-          });
-          if (check.ok) {
-            const data = await check.json();
-            sha = data.sha;
-          }
-        } catch (err) {}
-
-        const body = {
-          message: `رفع الملف ${file.name}`,
-          content: base64Content,
-          branch: branch,
-          ...(sha && { sha })
-        };
-
-        const response = await fetch(url, {
-          method: 'PUT',
-          headers: {
-            'Authorization': `token ${token}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify(body)
+    <script>
+        document.getElementById('uploadBtn').addEventListener('click', async function() {
+            const governorateFile = document.getElementById('governorate').files[0];
+            const banksFile = document.getElementById('banks').files[0];
+            const repo = document.getElementById('repo').value;
+            const token = document.getElementById('token').value;
+            const branch = document.getElementById('branch').value || 'main';
+            
+            const statusDiv = document.getElementById('status');
+            statusDiv.textContent = '';
+            statusDiv.className = 'status';
+            
+            if (!governorateFile && !banksFile) {
+                showStatus('يرجى اختيار ملف واحد على الأقل للرفع', 'error');
+                return;
+            }
+            
+            if (!repo || !token) {
+                showStatus('يرجى إدخال اسم المستودن ورمز الوصول', 'error');
+                return;
+            }
+            
+            try {
+                if (governorateFile) {
+                    await uploadFile(governorateFile, 'Governorate.json', repo, token, branch);
+                    showStatus('تم رفع Governorate.json بنجاح', 'success');
+                }
+                
+                if (banksFile) {
+                    await uploadFile(banksFile, 'pal_banks.json', repo, token, branch);
+                    showStatus('تم رفع pal_banks.json بنجاح', 'success');
+                }
+                
+                if (governorateFile && banksFile) {
+                    showStatus('تم رفع كلا الملفين بنجاح', 'success');
+                }
+            } catch (error) {
+                showStatus(`حدث خطأ: ${error.message}`, 'error');
+                console.error(error);
+            }
         });
-
-        if (response.ok) {
-          status.innerText += `✅ تم رفع الملف: ${file.name}\n`;
-        } else {
-          const err = await response.json();
-          status.innerText += `❌ خطأ في رفع ${file.name}: ${err.message}\n`;
+        
+        async function uploadFile(file, targetFilename, repo, token, branch) {
+            const content = await readFileAsBase64(file);
+            const apiUrl = `https://api.github.com/repos/${repo}/contents/${targetFilename}`;
+            
+            // تحقق مما إذا كان الملف موجودًا بالفعل للحصول على sha
+            let sha = null;
+            try {
+                const response = await fetch(apiUrl, {
+                    headers: {
+                        'Authorization': `token ${token}`,
+                        'Accept': 'application/vnd.github.v3+json'
+                    }
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    sha = data.sha;
+                }
+            } catch (error) {
+                console.log('الملف غير موجود، سيتم إنشاؤه جديدًا');
+            }
+            
+            const payload = {
+                message: `Update ${targetFilename}`,
+                content: content,
+                branch: branch
+            };
+            
+            if (sha) {
+                payload.sha = sha;
+            }
+            
+            const uploadResponse = await fetch(apiUrl, {
+                method: 'PUT',
+                headers: {
+                    'Authorization': `token ${token}`,
+                    'Accept': 'application/vnd.github.v3+json',
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(payload)
+            });
+            
+            if (!uploadResponse.ok) {
+                const errorData = await uploadResponse.json();
+                throw new Error(errorData.message || 'فشل رفع الملف');
+            }
         }
-      }
-    }
-  </script>
+        
+        function readFileAsBase64(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => {
+                    const base64String = reader.result.split(',')[1];
+                    resolve(base64String);
+                };
+                reader.onerror = reject;
+                reader.readAsDataURL(file);
+            });
+        }
+        
+        function showStatus(message, type) {
+            const statusDiv = document.getElementById('status');
+            statusDiv.textContent = message;
+            statusDiv.className = `status ${type}`;
+        }
+    </script>
 </body>
 </html>
