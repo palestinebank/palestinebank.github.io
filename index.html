@@ -1,12 +1,18 @@
 <!DOCTYPE html>
 <html lang="ar">
 <head>
-  <meta charset="UTF-8">
-  <title>خريطة الفروع والمركز الرئيسي</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <meta charset="UTF-8" />
+  <title>رفع ملفات JSON وعرضها على الخريطة</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+  />
   <style>
-    #map { height: 100vh; direction: rtl; }
+    #map {
+      height: 90vh;
+      direction: rtl;
+    }
     .distance-label {
       font-size: 12px;
       color: black;
@@ -15,43 +21,54 @@
       border: 1px solid gray;
       border-radius: 4px;
     }
+    #upload-container {
+      margin: 10px;
+      text-align: center;
+    }
   </style>
 </head>
 <body>
+  <div id="upload-container">
+    <label>اختر ملف المحافظات (Governorate.json):
+      <input type="file" id="governorateFile" accept=".json" />
+    </label>
+    <label>اختر ملف البنوك (pal_banks.json):
+      <input type="file" id="banksFile" accept=".json" />
+    </label>
+  </div>
 
-<div id="map"></div>
+  <div id="map"></div>
 
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    const map = L.map("map").setView([31.9, 35.2], 8);
 
-<script>
-  // روابط الملفات من GitHub — عدلي هذا الجزء بمعلومات مستودعك:
-  const governorateURL = "https://raw.githubusercontent.com/your-username/your-repo-name/main/Governorate.json";
-  const banksURL = "https://raw.githubusercontent.com/your-username/your-repo-name/main/pal_banks.json";
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: "&copy; OpenStreetMap contributors",
+    }).addTo(map);
 
-  const map = L.map("map").setView([31.9, 35.2], 8);
+    let governorateData = null;
+    let banksData = null;
 
-  // خلفية الخريطة
-  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    attribution: '&copy; OpenStreetMap contributors'
-  }).addTo(map);
+    function tryRender() {
+      if (!governorateData || !banksData) return;
 
-  // تحميل المحافظات
-  fetch(governorateURL)
-    .then(response => response.json())
-    .then(data => {
-      L.geoJSON(data, {
-        style: { color: "#999", weight: 1 }
+      map.eachLayer((layer) => {
+        if (layer instanceof L.GeoJSON || layer instanceof L.Marker || layer instanceof L.Polyline) {
+          map.removeLayer(layer);
+        }
+      });
+
+      // عرض المحافظات
+      L.geoJSON(governorateData, {
+        style: { color: "#999", weight: 1 },
       }).addTo(map);
-    });
 
-  // تحميل الفروع وتحديد المركز الرئيسي
-  fetch(banksURL)
-    .then(response => response.json())
-    .then(data => {
+      // تحديد المركز الرئيسي والفروع
       let mainBranch = null;
       let branches = [];
 
-      const geoLayer = L.geoJSON(data, {
+      L.geoJSON(banksData, {
         pointToLayer: function (feature, latlng) {
           const name = feature.properties.name || "فرع غير معرف";
           const isMain = name.includes("المركز الرئيسي") || name.includes("الإدارة العامة");
@@ -60,51 +77,77 @@
 
           if (isMain) {
             mainBranch = latlng;
-            marker.setIcon(L.icon({
-              iconUrl: 'https://maps.google.com/mapfiles/ms/icons/red-dot.png',
-              iconSize: [32, 32]
-            }));
+            marker.setIcon(
+              L.icon({
+                iconUrl: "https://maps.google.com/mapfiles/ms/icons/red-dot.png",
+                iconSize: [32, 32],
+              })
+            );
           } else {
             branches.push({ name, latlng });
-            marker.setIcon(L.icon({
-              iconUrl: 'https://maps.google.com/mapfiles/ms/icons/blue-dot.png',
-              iconSize: [32, 32]
-            }));
+            marker.setIcon(
+              L.icon({
+                iconUrl: "https://maps.google.com/mapfiles/ms/icons/blue-dot.png",
+                iconSize: [32, 32],
+              })
+            );
           }
-
           return marker;
-        }
+        },
       }).addTo(map);
 
-      // رسم الخطوط والمسافات بعد التأكد من وجود المركز
-      setTimeout(() => {
-        if (!mainBranch) {
-          alert("⚠️ لم يتم العثور على المركز الرئيسي للإدارة العامة.");
-          return;
+      if (!mainBranch) {
+        alert("⚠️ لم يتم العثور على المركز الرئيسي للإدارة العامة.");
+        return;
+      }
+
+      branches.forEach((branch) => {
+        const line = L.polyline([mainBranch, branch.latlng], { color: "green" }).addTo(map);
+        const distance = map.distance(mainBranch, branch.latlng) / 1000; // بالكيلومتر
+
+        const midLat = (mainBranch.lat + branch.latlng.lat) / 2;
+        const midLng = (mainBranch.lng + branch.latlng.lng) / 2;
+
+        L.marker([midLat, midLng], {
+          icon: L.divIcon({
+            className: "distance-label",
+            html: `${distance.toFixed(2)} كم`,
+          }),
+        }).addTo(map);
+      });
+    }
+
+    document.getElementById("governorateFile").addEventListener("change", function (event) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = function (e) {
+        try {
+          governorateData = JSON.parse(e.target.result);
+          tryRender();
+        } catch (err) {
+          alert("خطأ في قراءة ملف المحافظات: " + err.message);
         }
-
-        branches.forEach(branch => {
-          const line = L.polyline([mainBranch, branch.latlng], { color: 'green' }).addTo(map);
-          const distance = map.distance(mainBranch, branch.latlng) / 1000; // كم
-
-          const midLat = (mainBranch.lat + branch.latlng.lat) / 2;
-          const midLng = (mainBranch.lng + branch.latlng.lng) / 2;
-
-          L.marker([midLat, midLng], {
-            icon: L.divIcon({
-              className: 'distance-label',
-              html: `${distance.toFixed(2)} كم`
-            })
-          }).addTo(map);
-        });
-
-      }, 500); // تأخير للتأكد من تحميل النقاط
-    })
-    .catch(error => {
-      console.error("فشل تحميل البيانات:", error);
-      alert("⚠️ حدث خطأ أثناء تحميل البيانات من GitHub.");
+      };
+      reader.readAsText(file);
     });
-</script>
 
+    document.getElementById("banksFile").addEventListener("change", function (event) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = function (e) {
+        try {
+          banksData = JSON.parse(e.target.result);
+          tryRender();
+        } catch (err) {
+          alert("خطأ في قراءة ملف البنوك: " + err.message);
+        }
+      };
+      reader.readAsText(file);
+    });
+  </script>
 </body>
 </html>
