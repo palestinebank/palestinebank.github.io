@@ -1,153 +1,113 @@
 <!DOCTYPE html>
 <html lang="ar">
 <head>
-  <meta charset="UTF-8" />
-  <title>رفع ملفات JSON وعرضها على الخريطة</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <link
-    rel="stylesheet"
-    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-  />
+  <meta charset="UTF-8">
+  <title>رفع ملف إلى GitHub</title>
   <style>
-    #map {
-      height: 90vh;
-      direction: rtl;
-    }
-    .distance-label {
-      font-size: 12px;
-      color: black;
-      background: white;
-      padding: 2px 5px;
-      border: 1px solid gray;
-      border-radius: 4px;
-    }
-    #upload-container {
-      margin: 10px;
-      text-align: center;
-    }
+    body { font-family: Arial; direction: rtl; padding: 20px; max-width: 600px; margin: auto; }
+    label { display: block; margin-top: 10px; }
+    input, button, select { width: 100%; padding: 8px; margin-top: 5px; }
+    #status { margin-top: 15px; font-weight: bold; }
   </style>
 </head>
 <body>
-  <div id="upload-container">
-    <label>اختر ملف المحافظات (Governorate.json):
-      <input type="file" id="governorateFile" accept=".json" />
-    </label>
-    <label>اختر ملف البنوك (pal_banks.json):
-      <input type="file" id="banksFile" accept=".json" />
-    </label>
-  </div>
 
-  <div id="map"></div>
+  <h2>🔼 رفع ملف إلى GitHub</h2>
 
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <label>GitHub Username:
+    <input type="text" id="username" placeholder="مثال: salyayed" />
+  </label>
+
+  <label>Repository Name:
+    <input type="text" id="repo" placeholder="مثال: pal-map" />
+  </label>
+
+  <label>Branch Name:
+    <input type="text" id="branch" value="main" />
+  </label>
+
+  <label>GitHub Token:
+    <input type="password" id="token" placeholder="توكن بصلاحية repo" />
+  </label>
+
+  <label>اختيار الملف لرفعه:
+    <input type="file" id="fileInput" />
+  </label>
+
+  <button onclick="uploadToGitHub()">🚀 رفع الملف</button>
+
+  <div id="status"></div>
+
   <script>
-    const map = L.map("map").setView([31.9, 35.2], 8);
+    async function uploadToGitHub() {
+      const username = document.getElementById('username').value.trim();
+      const repo = document.getElementById('repo').value.trim();
+      const branch = document.getElementById('branch').value.trim();
+      const token = document.getElementById('token').value.trim();
+      const fileInput = document.getElementById('fileInput');
+      const status = document.getElementById('status');
 
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      attribution: "&copy; OpenStreetMap contributors",
-    }).addTo(map);
-
-    let governorateData = null;
-    let banksData = null;
-
-    function tryRender() {
-      if (!governorateData || !banksData) return;
-
-      map.eachLayer((layer) => {
-        if (layer instanceof L.GeoJSON || layer instanceof L.Marker || layer instanceof L.Polyline) {
-          map.removeLayer(layer);
-        }
-      });
-
-      // عرض المحافظات
-      L.geoJSON(governorateData, {
-        style: { color: "#999", weight: 1 },
-      }).addTo(map);
-
-      // تحديد المركز الرئيسي والفروع
-      let mainBranch = null;
-      let branches = [];
-
-      L.geoJSON(banksData, {
-        pointToLayer: function (feature, latlng) {
-          const name = feature.properties.name || "فرع غير معرف";
-          const isMain = name.includes("المركز الرئيسي") || name.includes("الإدارة العامة");
-
-          const marker = L.marker(latlng).bindPopup(name).addTo(map);
-
-          if (isMain) {
-            mainBranch = latlng;
-            marker.setIcon(
-              L.icon({
-                iconUrl: "https://maps.google.com/mapfiles/ms/icons/red-dot.png",
-                iconSize: [32, 32],
-              })
-            );
-          } else {
-            branches.push({ name, latlng });
-            marker.setIcon(
-              L.icon({
-                iconUrl: "https://maps.google.com/mapfiles/ms/icons/blue-dot.png",
-                iconSize: [32, 32],
-              })
-            );
-          }
-          return marker;
-        },
-      }).addTo(map);
-
-      if (!mainBranch) {
-        alert("⚠️ لم يتم العثور على المركز الرئيسي للإدارة العامة.");
+      if (!username || !repo || !branch || !token || !fileInput.files.length) {
+        alert('يرجى تعبئة جميع الحقول واختيار الملف');
         return;
       }
 
-      branches.forEach((branch) => {
-        const line = L.polyline([mainBranch, branch.latlng], { color: "green" }).addTo(map);
-        const distance = map.distance(mainBranch, branch.latlng) / 1000; // بالكيلومتر
+      const file = fileInput.files[0];
+      const fileName = file.name;
+      const reader = new FileReader();
 
-        const midLat = (mainBranch.lat + branch.latlng.lat) / 2;
-        const midLng = (mainBranch.lng + branch.latlng.lng) / 2;
+      reader.onload = async function () {
+        const content = reader.result;
+        const base64Content = btoa(content);
 
-        L.marker([midLat, midLng], {
-          icon: L.divIcon({
-            className: "distance-label",
-            html: `${distance.toFixed(2)} كم`,
-          }),
-        }).addTo(map);
-      });
+        // التحقق إن كان الملف موجودًا مسبقًا للحصول على SHA
+        let sha = null;
+        try {
+          const getRes = await fetch(`https://api.github.com/repos/${username}/${repo}/contents/${fileName}`, {
+            headers: { Authorization: `token ${token}` }
+          });
+          if (getRes.ok) {
+            const getData = await getRes.json();
+            sha = getData.sha;
+          }
+        } catch (e) {}
+
+        const payload = {
+          message: `Upload ${fileName} via browser`,
+          content: base64Content,
+          branch: branch
+        };
+
+        if (sha) payload.sha = sha;
+
+        const url = `https://api.github.com/repos/${username}/${repo}/contents/${fileName}`;
+
+        try {
+          const res = await fetch(url, {
+            method: 'PUT',
+            headers: {
+              Authorization: `token ${token}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+          });
+
+          if (res.ok) {
+            status.innerText = `✅ تم رفع الملف "${fileName}" بنجاح.`;
+            status.style.color = 'green';
+          } else {
+            const err = await res.json();
+            status.innerText = `❌ فشل الرفع: ${err.message}`;
+            status.style.color = 'red';
+          }
+        } catch (err) {
+          status.innerText = '❌ حدث خطأ أثناء الاتصال بـ GitHub.';
+          status.style.color = 'red';
+        }
+      };
+
+      reader.readAsBinaryString(file);
     }
-
-    document.getElementById("governorateFile").addEventListener("change", function (event) {
-      const file = event.target.files[0];
-      if (!file) return;
-
-      const reader = new FileReader();
-      reader.onload = function (e) {
-        try {
-          governorateData = JSON.parse(e.target.result);
-          tryRender();
-        } catch (err) {
-          alert("خطأ في قراءة ملف المحافظات: " + err.message);
-        }
-      };
-      reader.readAsText(file);
-    });
-
-    document.getElementById("banksFile").addEventListener("change", function (event) {
-      const file = event.target.files[0];
-      if (!file) return;
-
-      const reader = new FileReader();
-      reader.onload = function (e) {
-        try {
-          banksData = JSON.parse(e.target.result);
-          tryRender();
-        } catch (err) {
-          alert("خطأ في قراءة ملف البنوك: " + err.message);
-        }
-      };
-      reader.readAsText(file);
-    });
   </script>
 </body>
 </html>
