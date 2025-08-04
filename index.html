@@ -37,6 +37,17 @@
       font-weight: bold;
       margin-top: 5px;
     }
+    #distancesOutput {
+      max-height: 200px; 
+      overflow-y: auto; 
+      background: #fff; 
+      padding: 10px; 
+      margin-top:10px; 
+      border: 1px solid #ccc;
+      text-align: right;
+      white-space: pre-wrap;
+      font-family: monospace;
+    }
   </style>
 </head>
 <body>
@@ -51,6 +62,7 @@
   <button id="nearestBtn">أقرب مكتب</button>
   <button id="locateBtn">تحديد موقعي</button>
   <button id="exportExcelBtn">تصدير إلى Excel</button>
+  <button id="calculateDistancesBtn">حساب المسافات بين الفروع</button>
   <br><br>
   <label>رفع ملف المحافظات (Governorate.geojson):</label>
   <input type="file" id="governorateFile" accept=".json,.geojson" />
@@ -58,6 +70,8 @@
   <input type="file" id="moneyChangersFile" accept=".json" />
   <div class="info-box" id="countBox">عدد المكاتب الظاهرة: ...</div>
 </div>
+
+<pre id="distancesOutput">لم يتم حساب المسافات بعد.</pre>
 
 <div id="map"></div>
 
@@ -90,6 +104,7 @@ function showFilteredPoints(filterValue) {
     : allFeatures.filter(f => f.properties.Near_by === filterValue);
 
   document.getElementById("countBox").textContent = "عدد المكاتب الظاهرة: " + currentFiltered.length;
+  document.getElementById("distancesOutput").textContent = "لم يتم حساب المسافات بعد.";
 
   allPointsLayer = L.geoJSON(currentFiltered, {
     pointToLayer: function (feature, latlng) {
@@ -293,6 +308,34 @@ document.getElementById('exportExcelBtn').addEventListener('click', function () 
   XLSX.utils.book_append_sheet(wb, ws, "مكاتب الصرافة");
   XLSX.writeFile(wb, "مكاتب_الصرافة.xlsx");
 });
+
+// حساب المسافات بين الفروع
+function calculateDistancesBetweenBranches() {
+  const output = [];
+  for (let i = 0; i < currentFiltered.length; i++) {
+    const f1 = currentFiltered[i];
+    const coord1 = L.latLng(f1.geometry.coordinates[1], f1.geometry.coordinates[0]);
+    const name1 = f1.properties.Name || `فرع ${i+1}`;
+
+    for (let j = i + 1; j < currentFiltered.length; j++) {
+      const f2 = currentFiltered[j];
+      const coord2 = L.latLng(f2.geometry.coordinates[1], f2.geometry.coordinates[0]);
+      const name2 = f2.properties.Name || `فرع ${j+1}`;
+
+      const distMeters = coord1.distanceTo(coord2);
+      output.push(`${name1} ↔ ${name2} : ${(distMeters / 1000).toFixed(3)} كم`);
+    }
+  }
+
+  if (output.length === 0) {
+    document.getElementById('distancesOutput').textContent = "لا توجد فروع كافية لحساب المسافات.";
+  } else {
+    document.getElementById('distancesOutput').textContent = output.join("\n");
+  }
+}
+
+document.getElementById('calculateDistancesBtn').addEventListener('click', calculateDistancesBetweenBranches);
+
 </script>
 
 </body>
