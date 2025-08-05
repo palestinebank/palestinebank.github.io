@@ -16,7 +16,7 @@
       text-align: center;
       box-shadow: 0 2px 4px rgba(0,0,0,0.1);
     }
-    input, button {
+    input, button, select {
       padding: 6px 12px;
       margin: 5px;
       font-size: 16px;
@@ -48,9 +48,16 @@
   <input type="file" id="mainFile" accept=".json" />
   <label>رفع ملف الفروع:</label>
   <input type="file" id="branchFile" accept=".json" />
+  <br>
+  <label>المسافة القصوى (كم):</label>
+  <input type="number" id="distanceFilter" min="0" value="50" />
+  <label>اختر المحافظة:</label>
+  <select id="governorateFilter"><option value="">الكل</option></select>
+  <br>
   <button id="calcBtn">احسب المسافات وارسم الخطوط</button>
   <button id="nearestBtn">أقرب فرع</button>
   <button id="exportBtn">تصدير إلى Excel</button>
+  <button onclick="window.print()">طباعة</button>
   <div class="info" id="countBox">عدد الفروع الظاهرة: ...</div>
 </div>
 
@@ -69,10 +76,22 @@ let branchFeatures = [];
 let branchLayer = null;
 let linesLayer = null;
 let distanceResults = [];
+let allGovernorates = new Set();
 
-document.getElementById("govFile").addEventListener("change", function (e) {
+function updateGovernorateOptions() {
+  const select = document.getElementById("governorateFilter");
+  select.innerHTML = '<option value="">الكل</option>';
+  Array.from(allGovernorates).sort().forEach(gov => {
+    const opt = document.createElement("option");
+    opt.value = gov;
+    opt.textContent = gov;
+    select.appendChild(opt);
+  });
+}
+
+document.getElementById("govFile").addEventListener("change", e => {
   const reader = new FileReader();
-  reader.onload = function () {
+  reader.onload = () => {
     const geojson = JSON.parse(reader.result);
     L.geoJSON(geojson, {
       style: { color: "blue", weight: 2, fillOpacity: 0.1 }
@@ -81,178 +100,127 @@ document.getElementById("govFile").addEventListener("change", function (e) {
   reader.readAsText(e.target.files[0]);
 });
 
-document.getElementById("mainFile").addEventListener("change", function (e) {
+document.getElementById("mainFile").addEventListener("change", e => {
   const reader = new FileReader();
-  reader.onload = function () {
+  reader.onload = () => {
     const json = JSON.parse(reader.result);
     const feature = json.features[0];
     mainCenterCoords = feature.geometry.coordinates;
     L.circleMarker([mainCenterCoords[1], mainCenterCoords[0]], {
-      radius: 10,
-      fillColor: "blue",
-      color: "#000",
-      weight: 2,
-      opacity: 1,
-      fillOpacity: 0.9
-    })
-    .addTo(map)
-    .bindPopup("المركز الرئيسي للإدارة العامة")
-    .openPopup();
+      radius: 10, fillColor: "blue", color: "#000", weight: 2, fillOpacity: 0.9
+    }).addTo(map).bindPopup("المركز الرئيسي للإدارة العامة").openPopup();
   };
   reader.readAsText(e.target.files[0]);
 });
 
-document.getElementById("branchFile").addEventListener("change", function (e) {
+document.getElementById("branchFile").addEventListener("change", e => {
   const reader = new FileReader();
-  reader.onload = function () {
+  reader.onload = () => {
     const json = JSON.parse(reader.result);
     branchFeatures = json.features;
-
+    allGovernorates.clear();
+    branchFeatures.forEach(f => {
+      if (f.properties["المحافظة"]) allGovernorates.add(f.properties["المحافظة"]);
+    });
+    updateGovernorateOptions();
     if (branchLayer) map.removeLayer(branchLayer);
-    if (linesLayer) map.removeLayer(linesLayer);
-    distanceResults = [];
-
     branchLayer = L.geoJSON(branchFeatures, {
-      pointToLayer: function (feature, latlng) {
-        return L.circleMarker(latlng, {
-          radius: 8,
-          fillColor: "green",
-          color: "#000",
-          weight: 1,
-          opacity: 1,
-          fillOpacity: 0.9
-        });
-      },
-      onEachFeature: function (feature, layer) {
-        const name = feature.properties["الاسم"] || "فرع بدون اسم";
+      pointToLayer: (f, latlng) => L.circleMarker(latlng, {
+        radius: 8, fillColor: "green", color: "#000", weight: 1, fillOpacity: 0.9
+      }),
+      onEachFeature: (f, layer) => {
+        const name = f.properties["الاسم"] || "فرع بدون اسم";
         layer.bindPopup(`<b>الفرع:</b> ${name}`);
       }
     }).addTo(map);
-
     map.fitBounds(branchLayer.getBounds());
-    document.getElementById("countBox").textContent = "عدد الفروع الظاهرة: " + branchFeatures.length;
+    document.getElementById("countBox").textContent = `عدد الفروع الظاهرة: ${branchFeatures.length}`;
   };
   reader.readAsText(e.target.files[0]);
 });
 
-document.getElementById("calcBtn").addEventListener("click", function () {
-  const outputBox = document.getElementById("distanceOutput");
+document.getElementById("calcBtn").addEventListener("click", () => {
+  const output = document.getElementById("distanceOutput");
   if (!mainCenterCoords || branchFeatures.length === 0) {
-    outputBox.textContent = "يرجى رفع ملفات المركز الرئيسي والفروع.";
+    output.textContent = "يرجى رفع ملفات المركز الرئيسي والفروع.";
     return;
   }
-
-  outputBox.textContent = "جارٍ الحساب...";
-
+  output.textContent = "جارٍ الحساب...";
   const center = L.latLng(mainCenterCoords[1], mainCenterCoords[0]);
   let lines = [];
   distanceResults = [];
-  let textResult = "المسافات الخطية من المركز الرئيسي (تقريبية):\n\n";
+  let resultText = "المسافات من المركز الرئيسي:\n\n";
+
+  const maxDist = parseFloat(document.getElementById("distanceFilter").value) * 1000;
+  const selectedGov = document.getElementById("governorateFilter").value;
 
   branchFeatures.forEach(f => {
+    const name = f.properties["الاسم"] || "فرع بدون اسم";
+    const gov = f.properties["المحافظة"] || "";
+    if (selectedGov && gov !== selectedGov) return;
     const coords = f.geometry.coordinates;
     const target = L.latLng(coords[1], coords[0]);
-    const dist = center.distanceTo(target); // بالمتر
-    const name = f.properties["الاسم"] || "فرع بدون اسم";
+    const dist = center.distanceTo(target);
+    if (dist > maxDist) return;
 
     lines.push([center, target]);
-
-    L.marker(target).addTo(map).bindTooltip(`${(dist/1000).toFixed(2)} كم`, {
-      permanent: true,
-      direction: "right",
-      offset: L.point(10,0)
-    });
-
+    resultText += `${name} (${gov}):\n${dist.toFixed(0)} م / ${(dist / 1000).toFixed(2)} كم\n\n`;
     distanceResults.push({
-      name,
-      lat: coords[1],
-      lon: coords[0],
-      distance_m: dist.toFixed(0),
-      distance_km: (dist / 1000).toFixed(3)
+      name, lat: coords[1], lon: coords[0], distance_m: dist.toFixed(0), distance_km: (dist / 1000).toFixed(2), governorate: gov
     });
-
-    textResult += `${name}:\n${dist.toFixed(0)} متر / ${(dist / 1000).toFixed(3)} كم\n\n`;
+    L.marker(target).addTo(map).bindTooltip(`${(dist/1000).toFixed(2)} كم`, { permanent: true, direction: "right" });
   });
 
   if (linesLayer) map.removeLayer(linesLayer);
-  linesLayer = L.layerGroup(lines.map(line =>
-    L.polyline(line, { color: "red", weight: 2, dashArray: "5,5" })
-  )).addTo(map);
-
-  outputBox.textContent = textResult;
+  linesLayer = L.layerGroup(lines.map(line => L.polyline(line, { color: "red", weight: 2, dashArray: "5,5" }))).addTo(map);
+  output.textContent = resultText;
 });
 
-document.getElementById("nearestBtn").addEventListener("click", function () {
-  if (!navigator.geolocation) {
-    alert("المتصفح لا يدعم تحديد الموقع.");
+document.getElementById("nearestBtn").addEventListener("click", () => {
+  if (!navigator.geolocation || branchFeatures.length === 0) {
+    alert("يرجى تفعيل الموقع ورفع ملف الفروع.");
     return;
   }
-
-  if (branchFeatures.length === 0) {
-    alert("يرجى رفع ملف الفروع أولاً.");
-    return;
-  }
-
-  navigator.geolocation.getCurrentPosition(function (position) {
-    const userLoc = L.latLng(position.coords.latitude, position.coords.longitude);
-
-    let nearestFeature = null;
-    let minDistance = Infinity;
-
+  navigator.geolocation.getCurrentPosition(pos => {
+    const userLoc = L.latLng(pos.coords.latitude, pos.coords.longitude);
+    let nearest = null, minDist = Infinity;
     branchFeatures.forEach(f => {
       const coords = f.geometry.coordinates;
       const dist = userLoc.distanceTo(L.latLng(coords[1], coords[0]));
-      if (dist < minDistance) {
-        minDistance = dist;
-        nearestFeature = f;
+      if (dist < minDist) {
+        minDist = dist;
+        nearest = f;
       }
     });
-
-    if (nearestFeature) {
-      const coords = nearestFeature.geometry.coordinates;
+    if (nearest) {
+      const coords = nearest.geometry.coordinates;
       const target = L.latLng(coords[1], coords[0]);
-      const name = nearestFeature.properties["الاسم"] || "فرع بدون اسم";
-
+      const name = nearest.properties["الاسم"] || "فرع بدون اسم";
       L.marker(userLoc).addTo(map).bindPopup("موقعك الحالي").openPopup();
-
-      L.polyline([userLoc, target], {
-        color: "orange",
-        weight: 4,
-        dashArray: "5,5"
-      }).addTo(map);
-
-      L.popup()
-        .setLatLng(target)
-        .setContent(`أقرب فرع: <b>${name}</b><br>المسافة: ${(minDistance / 1000).toFixed(2)} كم`)
-        .openOn(map);
-
+      L.polyline([userLoc, target], { color: "orange", weight: 4, dashArray: "5,5" }).addTo(map);
+      L.popup().setLatLng(target).setContent(`أقرب فرع: <b>${name}</b><br>المسافة: ${(minDist/1000).toFixed(2)} كم`).openOn(map);
       map.fitBounds(L.latLngBounds([userLoc, target]).pad(0.3));
     }
-
-  }, () => {
-    alert("تعذر تحديد الموقع.");
   });
 });
 
-document.getElementById("exportBtn").addEventListener("click", function () {
+document.getElementById("exportBtn").addEventListener("click", () => {
   if (!distanceResults.length) {
-    alert("يرجى حساب المسافات أولاً.");
+    alert("لا توجد بيانات لتصديرها.");
     return;
   }
-
   const data = distanceResults.map(f => ({
     "اسم الفرع": f.name,
+    "المحافظة": f.governorate,
     "الإحداثيات": `${f.lat.toFixed(6)}, ${f.lon.toFixed(6)}`,
     "المسافة (متر)": f.distance_m,
     "المسافة (كم)": f.distance_km
   }));
-
   const ws = XLSX.utils.json_to_sheet(data);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "الفروع");
-  XLSX.writeFile(wb, "المسافات.xlsx");
+  XLSX.writeFile(wb, "الفروع_filtered.xlsx");
 });
 </script>
-
 </body>
 </html>
