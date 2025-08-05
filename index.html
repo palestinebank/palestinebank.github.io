@@ -67,18 +67,17 @@
 <script>
 const map = L.map('map').setView([32.0, 35.3], 9);
 
-// خلفية الخريطة
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   maxZoom: 18,
-  attribution: '&copy; OpenStreetMap'
+  attribution: '&copy; OpenStreetMap contributors'
 }).addTo(map);
 
-// المتغيرات العامة
 let branchFeatures = [];
 let branchLayer = null;
 let routingControl = null;
 let nearestMarker = null;
 let mainCenterCoords = null;
+let distanceResults = []; // ← لتخزين المسافات بعد الحساب
 
 document.getElementById('govFile').addEventListener('change', function (e) {
   const file = e.target.files[0];
@@ -212,7 +211,8 @@ document.getElementById('distanceBtn').addEventListener('click', function () {
   }
 
   const center = L.latLng(mainCenterCoords[1], mainCenterCoords[0]);
-  let results = "المسافات من المركز الرئيسي للإدارة العامة:\n\n";
+  let resultsText = "المسافات من المركز الرئيسي للإدارة العامة:\n\n";
+  distanceResults = [];
 
   branchFeatures.forEach(f => {
     let name = f.properties.Name || "فرع بدون اسم";
@@ -220,12 +220,20 @@ document.getElementById('distanceBtn').addEventListener('click', function () {
 
     const coords = f.geometry.coordinates;
     const target = L.latLng(coords[1], coords[0]);
-    const dist = center.distanceTo(target); // بالمتر
+    const dist = center.distanceTo(target);
 
-    results += `${name}:\n${dist.toFixed(0)} متر / ${(dist / 1000).toFixed(3)} كم\n\n`;
+    resultsText += `${name}:\n${dist.toFixed(0)} متر / ${(dist / 1000).toFixed(3)} كم\n\n`;
+
+    distanceResults.push({
+      name: name,
+      lat: coords[1],
+      lon: coords[0],
+      distance_m: dist.toFixed(0),
+      distance_km: (dist / 1000).toFixed(3)
+    });
   });
 
-  outputBox.textContent = results;
+  outputBox.textContent = resultsText;
 });
 
 document.getElementById('exportBtn').addEventListener('click', function () {
@@ -234,12 +242,21 @@ document.getElementById('exportBtn').addEventListener('click', function () {
     return;
   }
 
-  const exportData = branchFeatures.map(f => {
-    return {
+  let exportData;
+
+  if (distanceResults.length > 0) {
+    exportData = distanceResults.map(f => ({
+      "اسم الفرع": f.name,
+      "الإحداثيات": `${f.lat.toFixed(6)}, ${f.lon.toFixed(6)}`,
+      "المسافة (متر)": f.distance_m,
+      "المسافة (كم)": f.distance_km
+    }));
+  } else {
+    exportData = branchFeatures.map(f => ({
       "اسم الفرع": f.properties.Name || "",
       "الإحداثيات": `${f.geometry.coordinates[1].toFixed(6)}, ${f.geometry.coordinates[0].toFixed(6)}`
-    };
-  });
+    }));
+  }
 
   let ws = XLSX.utils.json_to_sheet(exportData);
   let wb = XLSX.utils.book_new();
