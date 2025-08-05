@@ -53,11 +53,17 @@
 <div id="controls">
   <label>رفع ملف المحافظات:</label>
   <input type="file" id="govFile" accept=".json,.geojson" />
+  
+  <label>رفع ملف المركز الرئيسي:</label>
+  <input type="file" id="mainCenterFile" accept=".json" />
+  
   <label>رفع ملف الفروع:</label>
   <input type="file" id="branchFile" accept=".json" />
+  
   <button id="nearestBtn">أقرب فرع</button>
   <button id="distanceBtn">احسب المسافات من المركز الرئيسي</button>
   <button id="exportBtn">تصدير إلى Excel</button>
+  
   <div class="info" id="countBox">عدد الفروع الظاهرة: ...</div>
 </div>
 
@@ -77,7 +83,7 @@ let branchLayer = null;
 let routingControl = null;
 let nearestMarker = null;
 let mainCenterCoords = null;
-let distanceResults = []; // ← لتخزين المسافات بعد الحساب
+let distanceResults = [];
 
 document.getElementById('govFile').addEventListener('change', function (e) {
   const file = e.target.files[0];
@@ -100,6 +106,39 @@ document.getElementById('govFile').addEventListener('change', function (e) {
   reader.readAsText(file);
 });
 
+document.getElementById('mainCenterFile').addEventListener('change', function (e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function (event) {
+    try {
+      const json = JSON.parse(event.target.result);
+      if (!json.features || json.features.length === 0) {
+        alert("ملف المركز الرئيسي لا يحتوي على بيانات.");
+        return;
+      }
+
+      const feature = json.features[0];
+      mainCenterCoords = feature.geometry.coordinates;
+
+      L.circleMarker([mainCenterCoords[1], mainCenterCoords[0]], {
+        radius: 10,
+        fillColor: "blue",
+        color: "#000",
+        weight: 2,
+        opacity: 1,
+        fillOpacity: 0.9
+      }).addTo(map).bindPopup("المركز الرئيسي للإدارة العامة").openPopup();
+
+      map.setView([mainCenterCoords[1], mainCenterCoords[0]], 10);
+
+    } catch (err) {
+      alert("خطأ في قراءة ملف المركز الرئيسي: " + err.message);
+    }
+  };
+  reader.readAsText(file);
+});
+
 document.getElementById('branchFile').addEventListener('change', function (e) {
   const file = e.target.files[0];
   if (!file) return;
@@ -115,10 +154,9 @@ document.getElementById('branchFile').addEventListener('change', function (e) {
 
       branchLayer = L.geoJSON(branchFeatures, {
         pointToLayer: function (feature, latlng) {
-          let isMainCenter = feature.properties.Name === "المركز الرئيسي للإدارة العامة";
           return L.circleMarker(latlng, {
             radius: 8,
-            fillColor: isMainCenter ? "blue" : "green",
+            fillColor: "green",
             color: "#000",
             weight: 1,
             opacity: 1,
@@ -127,9 +165,6 @@ document.getElementById('branchFile').addEventListener('change', function (e) {
         },
         onEachFeature: function (feature, layer) {
           let name = feature.properties.Name || "بدون اسم";
-          if (name === "المركز الرئيسي للإدارة العامة") {
-            mainCenterCoords = feature.geometry.coordinates;
-          }
           layer.bindPopup(`<b>الفرع:</b> ${name}`);
         }
       }).addTo(map);
@@ -206,7 +241,7 @@ document.getElementById('nearestBtn').addEventListener('click', function () {
 document.getElementById('distanceBtn').addEventListener('click', function () {
   const outputBox = document.getElementById('distanceOutput');
   if (!mainCenterCoords) {
-    outputBox.textContent = "لم يتم العثور على المركز الرئيسي للإدارة العامة ضمن البيانات.";
+    outputBox.textContent = "لم يتم رفع أو تحديد المركز الرئيسي للإدارة العامة.";
     return;
   }
 
@@ -216,8 +251,6 @@ document.getElementById('distanceBtn').addEventListener('click', function () {
 
   branchFeatures.forEach(f => {
     let name = f.properties.Name || "فرع بدون اسم";
-    if (name === "المركز الرئيسي للإدارة العامة") return;
-
     const coords = f.geometry.coordinates;
     const target = L.latLng(coords[1], coords[0]);
     const dist = center.distanceTo(target);
