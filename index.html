@@ -2,7 +2,7 @@
 <html lang="ar">
 <head>
   <meta charset="UTF-8" />
-  <title>خريطة الفروع والمركز الرئيسي (مسافة خطية سريعة)</title>
+  <title>خريطة الفروع والمركز الرئيسي</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
@@ -49,6 +49,7 @@
   <label>رفع ملف الفروع:</label>
   <input type="file" id="branchFile" accept=".json" />
   <button id="calcBtn">احسب المسافات وارسم الخطوط</button>
+  <button id="nearestBtn">أقرب فرع</button>
   <button id="exportBtn">تصدير إلى Excel</button>
   <div class="info" id="countBox">عدد الفروع الظاهرة: ...</div>
 </div>
@@ -154,17 +155,14 @@ document.getElementById("calcBtn").addEventListener("click", function () {
     const dist = center.distanceTo(target); // بالمتر
     const name = f.properties["الاسم"] || "فرع بدون اسم";
 
-    // رسم الخط
     lines.push([center, target]);
 
-    // تسمية المسافة بجانب النقطة
     L.marker(target).addTo(map).bindTooltip(`${(dist/1000).toFixed(2)} كم`, {
       permanent: true,
       direction: "right",
       offset: L.point(10,0)
     });
 
-    // حفظ البيانات للتصدير
     distanceResults.push({
       name,
       lat: coords[1],
@@ -182,6 +180,58 @@ document.getElementById("calcBtn").addEventListener("click", function () {
   )).addTo(map);
 
   outputBox.textContent = textResult;
+});
+
+document.getElementById("nearestBtn").addEventListener("click", function () {
+  if (!navigator.geolocation) {
+    alert("المتصفح لا يدعم تحديد الموقع.");
+    return;
+  }
+
+  if (branchFeatures.length === 0) {
+    alert("يرجى رفع ملف الفروع أولاً.");
+    return;
+  }
+
+  navigator.geolocation.getCurrentPosition(function (position) {
+    const userLoc = L.latLng(position.coords.latitude, position.coords.longitude);
+
+    let nearestFeature = null;
+    let minDistance = Infinity;
+
+    branchFeatures.forEach(f => {
+      const coords = f.geometry.coordinates;
+      const dist = userLoc.distanceTo(L.latLng(coords[1], coords[0]));
+      if (dist < minDistance) {
+        minDistance = dist;
+        nearestFeature = f;
+      }
+    });
+
+    if (nearestFeature) {
+      const coords = nearestFeature.geometry.coordinates;
+      const target = L.latLng(coords[1], coords[0]);
+      const name = nearestFeature.properties["الاسم"] || "فرع بدون اسم";
+
+      L.marker(userLoc).addTo(map).bindPopup("موقعك الحالي").openPopup();
+
+      L.polyline([userLoc, target], {
+        color: "orange",
+        weight: 4,
+        dashArray: "5,5"
+      }).addTo(map);
+
+      L.popup()
+        .setLatLng(target)
+        .setContent(`أقرب فرع: <b>${name}</b><br>المسافة: ${(minDistance / 1000).toFixed(2)} كم`)
+        .openOn(map);
+
+      map.fitBounds(L.latLngBounds([userLoc, target]).pad(0.3));
+    }
+
+  }, () => {
+    alert("تعذر تحديد الموقع.");
+  });
 });
 
 document.getElementById("exportBtn").addEventListener("click", function () {
