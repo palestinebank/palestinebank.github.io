@@ -2,38 +2,21 @@
 <html lang="ar">
 <head>
   <meta charset="UTF-8" />
-  <title>خريطة الفروع والمركز الرئيسي (حساب مسافات طريق سريع)</title>
+  <title>خريطة الفروع والمركز الرئيسي (مسافة خطية سريعة)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-
-  <link
-    rel="stylesheet"
-    href="https://unpkg.com/leaflet-routing-machine/dist/leaflet-routing-machine.css"
-  />
-  <script src="https://unpkg.com/leaflet-routing-machine/dist/leaflet-routing-machine.min.js"></script>
-
   <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
-
   <style>
-    body {
-      margin: 0;
-      font-family: Arial, sans-serif;
-      direction: rtl;
-      background: #f5f5f5;
-    }
-    #map {
-      height: 75vh;
-    }
+    body { margin: 0; font-family: Arial, sans-serif; direction: rtl; background: #f5f5f5; }
+    #map { height: 75vh; }
     #controls {
       background: #fff;
       padding: 10px;
       text-align: center;
-      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
     }
-    input,
-    button {
+    input, button {
       padding: 6px 12px;
       margin: 5px;
       font-size: 16px;
@@ -57,278 +40,169 @@
   </style>
 </head>
 <body>
-  <div id="controls">
-    <label>رفع ملف المحافظات:</label>
-    <input type="file" id="govFile" accept=".json,.geojson" />
 
-    <label>رفع ملف المركز الرئيسي:</label>
-    <input type="file" id="mainCenterFile" accept=".json" />
+<div id="controls">
+  <label>رفع ملف المحافظات:</label>
+  <input type="file" id="govFile" accept=".json,.geojson" />
+  <label>رفع ملف المركز الرئيسي:</label>
+  <input type="file" id="mainFile" accept=".json" />
+  <label>رفع ملف الفروع:</label>
+  <input type="file" id="branchFile" accept=".json" />
+  <button id="calcBtn">احسب المسافات وارسم الخطوط</button>
+  <button id="exportBtn">تصدير إلى Excel</button>
+  <div class="info" id="countBox">عدد الفروع الظاهرة: ...</div>
+</div>
 
-    <label>رفع ملف الفروع:</label>
-    <input type="file" id="branchFile" accept=".json" />
+<div id="map"></div>
+<div id="distanceOutput">المسافات ستظهر هنا بعد الحساب.</div>
 
-    <button id="nearestBtn">أقرب فرع</button>
-    <button id="distanceBtn">احسب المسافات وارسم الخطوط</button>
-    <button id="exportBtn">تصدير إلى Excel</button>
+<script>
+const map = L.map("map").setView([32.0, 35.3], 9);
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  maxZoom: 18,
+  attribution: "&copy; OpenStreetMap contributors"
+}).addTo(map);
 
-    <div class="info" id="countBox">عدد الفروع الظاهرة: ...</div>
-  </div>
+let mainCenterCoords = null;
+let branchFeatures = [];
+let branchLayer = null;
+let linesLayer = null;
+let distanceResults = [];
 
-  <div id="map"></div>
-  <div id="distanceOutput">المسافات ستظهر هنا بعد الحساب.</div>
+document.getElementById("govFile").addEventListener("change", function (e) {
+  const reader = new FileReader();
+  reader.onload = function () {
+    const geojson = JSON.parse(reader.result);
+    L.geoJSON(geojson, {
+      style: { color: "blue", weight: 2, fillOpacity: 0.1 }
+    }).addTo(map);
+  };
+  reader.readAsText(e.target.files[0]);
+});
 
-  <script>
-    const map = L.map("map").setView([32.0, 35.3], 9);
+document.getElementById("mainFile").addEventListener("change", function (e) {
+  const reader = new FileReader();
+  reader.onload = function () {
+    const json = JSON.parse(reader.result);
+    const feature = json.features[0];
+    mainCenterCoords = feature.geometry.coordinates;
+    L.circleMarker([mainCenterCoords[1], mainCenterCoords[0]], {
+      radius: 10,
+      fillColor: "blue",
+      color: "#000",
+      weight: 2,
+      opacity: 1,
+      fillOpacity: 0.9
+    })
+    .addTo(map)
+    .bindPopup("المركز الرئيسي للإدارة العامة")
+    .openPopup();
+  };
+  reader.readAsText(e.target.files[0]);
+});
 
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      maxZoom: 18,
-      attribution: "&copy; OpenStreetMap contributors",
+document.getElementById("branchFile").addEventListener("change", function (e) {
+  const reader = new FileReader();
+  reader.onload = function () {
+    const json = JSON.parse(reader.result);
+    branchFeatures = json.features;
+
+    if (branchLayer) map.removeLayer(branchLayer);
+    if (linesLayer) map.removeLayer(linesLayer);
+    distanceResults = [];
+
+    branchLayer = L.geoJSON(branchFeatures, {
+      pointToLayer: function (feature, latlng) {
+        return L.circleMarker(latlng, {
+          radius: 8,
+          fillColor: "green",
+          color: "#000",
+          weight: 1,
+          opacity: 1,
+          fillOpacity: 0.9
+        });
+      },
+      onEachFeature: function (feature, layer) {
+        const name = feature.properties["الاسم"] || "فرع بدون اسم";
+        layer.bindPopup(`<b>الفرع:</b> ${name}`);
+      }
     }).addTo(map);
 
-    let branchFeatures = [];
-    let branchLayer = null;
-    let mainCenterCoords = null;
-    let distanceResults = [];
-    let routeControls = [];
-    let nearestMarker = null;
-    let nearestRouteControl = null;
+    map.fitBounds(branchLayer.getBounds());
+    document.getElementById("countBox").textContent = "عدد الفروع الظاهرة: " + branchFeatures.length;
+  };
+  reader.readAsText(e.target.files[0]);
+});
 
-    // رفع المحافظات
-    document.getElementById("govFile").addEventListener("change", (e) => {
-      const file = e.target.files[0];
-      if (!file) return;
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const geojson = JSON.parse(event.target.result);
-        L.geoJSON(geojson, { style: { color: "blue", weight: 2, fillOpacity: 0.1 } }).addTo(map);
-      };
-      reader.readAsText(file);
+document.getElementById("calcBtn").addEventListener("click", function () {
+  const outputBox = document.getElementById("distanceOutput");
+  if (!mainCenterCoords || branchFeatures.length === 0) {
+    outputBox.textContent = "يرجى رفع ملفات المركز الرئيسي والفروع.";
+    return;
+  }
+
+  outputBox.textContent = "جارٍ الحساب...";
+
+  const center = L.latLng(mainCenterCoords[1], mainCenterCoords[0]);
+  let lines = [];
+  distanceResults = [];
+  let textResult = "المسافات الخطية من المركز الرئيسي (تقريبية):\n\n";
+
+  branchFeatures.forEach(f => {
+    const coords = f.geometry.coordinates;
+    const target = L.latLng(coords[1], coords[0]);
+    const dist = center.distanceTo(target); // بالمتر
+    const name = f.properties["الاسم"] || "فرع بدون اسم";
+
+    // رسم الخط
+    lines.push([center, target]);
+
+    // تسمية المسافة بجانب النقطة
+    L.marker(target).addTo(map).bindTooltip(`${(dist/1000).toFixed(2)} كم`, {
+      permanent: true,
+      direction: "right",
+      offset: L.point(10,0)
     });
 
-    // رفع المركز الرئيسي
-    document.getElementById("mainCenterFile").addEventListener("change", (e) => {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const json = JSON.parse(event.target.result);
-        const feature = json.features[0];
-        mainCenterCoords = feature.geometry.coordinates;
-        L.circleMarker([mainCenterCoords[1], mainCenterCoords[0]], {
-          radius: 10,
-          fillColor: "blue",
-          color: "#000",
-          weight: 2,
-          opacity: 1,
-          fillOpacity: 0.9,
-        })
-          .addTo(map)
-          .bindPopup("المركز الرئيسي للإدارة العامة")
-          .openPopup();
-        map.setView([mainCenterCoords[1], mainCenterCoords[0]], 10);
-      };
-      reader.readAsText(e.target.files[0]);
+    // حفظ البيانات للتصدير
+    distanceResults.push({
+      name,
+      lat: coords[1],
+      lon: coords[0],
+      distance_m: dist.toFixed(0),
+      distance_km: (dist / 1000).toFixed(3)
     });
 
-    // رفع الفروع
-    document.getElementById("branchFile").addEventListener("change", (e) => {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const json = JSON.parse(event.target.result);
-        branchFeatures = json.features;
-        if (branchLayer) map.removeLayer(branchLayer);
-        if (nearestMarker) map.removeLayer(nearestMarker);
-        if (nearestRouteControl) map.removeControl(nearestRouteControl);
-        routeControls.forEach((rc) => map.removeControl(rc));
-        routeControls = [];
-        distanceResults = [];
+    textResult += `${name}:\n${dist.toFixed(0)} متر / ${(dist / 1000).toFixed(3)} كم\n\n`;
+  });
 
-        branchLayer = L.geoJSON(branchFeatures, {
-          pointToLayer: (feature, latlng) =>
-            L.circleMarker(latlng, {
-              radius: 8,
-              fillColor: "green",
-              color: "#000",
-              weight: 1,
-              opacity: 1,
-              fillOpacity: 0.9,
-            }),
-          onEachFeature: (feature, layer) => {
-            const name = feature.properties["الاسم"] || "فرع بدون اسم";
-            layer.bindPopup(`<b>الفرع:</b> ${name}`);
-          },
-        }).addTo(map);
-        map.fitBounds(branchLayer.getBounds());
-        document.getElementById("countBox").textContent = "عدد الفروع الظاهرة: " + branchFeatures.length;
-        document.getElementById("distanceOutput").textContent = "المسافات ستظهر هنا بعد الحساب.";
-      };
-      reader.readAsText(e.target.files[0]);
-    });
+  if (linesLayer) map.removeLayer(linesLayer);
+  linesLayer = L.layerGroup(lines.map(line =>
+    L.polyline(line, { color: "red", weight: 2, dashArray: "5,5" })
+  )).addTo(map);
 
-    // زر أقرب فرع
-    document.getElementById("nearestBtn").addEventListener("click", () => {
-      if (!navigator.geolocation) return alert("المتصفح لا يدعم تحديد الموقع.");
-      if (!branchFeatures.length) return alert("يرجى رفع ملف الفروع أولاً.");
+  outputBox.textContent = textResult;
+});
 
-      if (nearestMarker) map.removeLayer(nearestMarker);
-      if (nearestRouteControl) map.removeControl(nearestRouteControl);
+document.getElementById("exportBtn").addEventListener("click", function () {
+  if (!distanceResults.length) {
+    alert("يرجى حساب المسافات أولاً.");
+    return;
+  }
 
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          const userLoc = L.latLng(position.coords.latitude, position.coords.longitude);
-          let nearest = null;
-          let minDist = Infinity;
+  const data = distanceResults.map(f => ({
+    "اسم الفرع": f.name,
+    "الإحداثيات": `${f.lat.toFixed(6)}, ${f.lon.toFixed(6)}`,
+    "المسافة (متر)": f.distance_m,
+    "المسافة (كم)": f.distance_km
+  }));
 
-          branchFeatures.forEach((f) => {
-            const coords = f.geometry.coordinates;
-            const dist = userLoc.distanceTo([coords[1], coords[0]]);
-            if (dist < minDist) {
-              minDist = dist;
-              nearest = f;
-            }
-          });
+  const ws = XLSX.utils.json_to_sheet(data);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "الفروع");
+  XLSX.writeFile(wb, "المسافات.xlsx");
+});
+</script>
 
-          if (nearest) {
-            const coords = nearest.geometry.coordinates;
-            const target = L.latLng(coords[1], coords[0]);
-
-            nearestMarker = L.marker(target)
-              .addTo(map)
-              .bindPopup(
-                `أقرب فرع<br>المسافة: ${minDist.toFixed(0)} م / ${(minDist / 1000).toFixed(2)} كم`
-              )
-              .openPopup();
-
-            nearestRouteControl = L.Routing.control({
-              waypoints: [userLoc, target],
-              routeWhileDragging: false,
-              createMarker: () => null,
-              lineOptions: { styles: [{ color: "red", opacity: 0.9, weight: 5 }] },
-              router: L.Routing.osrmv1({ serviceUrl: "https://router.project-osrm.org/route/v1" }),
-            }).addTo(map);
-
-            map.fitBounds(L.latLngBounds([userLoc, target]).pad(0.3));
-          }
-        },
-        () => alert("تعذر تحديد الموقع.")
-      );
-    });
-
-    // دالة مساعدة لإرسال طلبات متوازية مع حد توازي (throttle)
-    async function asyncPool(poolLimit, array, iteratorFn) {
-      const ret = [];
-      const executing = [];
-      for (const item of array) {
-        const p = Promise.resolve().then(() => iteratorFn(item));
-        ret.push(p);
-
-        if (poolLimit <= array.length) {
-          const e = p.then(() => executing.splice(executing.indexOf(e), 1));
-          executing.push(e);
-          if (executing.length >= poolLimit) {
-            await Promise.race(executing);
-          }
-        }
-      }
-      return Promise.all(ret);
-    }
-
-    // زر حساب المسافات مع خطوط الملاحة بشكل متوازي (توازي 4 طلبات)
-    document.getElementById("distanceBtn").addEventListener("click", async () => {
-      const outputBox = document.getElementById("distanceOutput");
-      if (!mainCenterCoords) {
-        outputBox.textContent = "لم يتم تحديد المركز الرئيسي.";
-        return;
-      }
-      if (!branchFeatures.length) {
-        outputBox.textContent = "يرجى رفع ملف الفروع أولاً.";
-        return;
-      }
-
-      // تنظيف الخريطة من الخطوط القديمة والنتائج السابقة
-      routeControls.forEach((ctrl) => map.removeControl(ctrl));
-      routeControls = [];
-      distanceResults = [];
-      outputBox.textContent = "جاري الحساب...";
-
-      const center = L.latLng(mainCenterCoords[1], mainCenterCoords[0]);
-
-      let resultsText = "المسافات من المركز الرئيسي:\n\n";
-
-      // دالة لحساب مسار واحد وترجيع المسافة
-      async function calculateRoute(feature) {
-        return new Promise((resolve, reject) => {
-          const coords = feature.geometry.coordinates;
-          const target = L.latLng(coords[1], coords[0]);
-          const name = feature.properties["الاسم"] || "فرع بدون اسم";
-
-          // ننشئ راوتر مؤقت للحساب فقط
-          const control = L.Routing.control({
-            waypoints: [center, target],
-            routeWhileDragging: false,
-            show: false,
-            createMarker: () => null,
-            lineOptions: { styles: [{ color: "red", opacity: 0.8, weight: 4 }] },
-            router: L.Routing.osrmv1({ serviceUrl: "https://router.project-osrm.org/route/v1" }),
-          })
-            .on("routesfound", function (e) {
-              const dist = e.routes[0].summary.totalDistance;
-              const km = (dist / 1000).toFixed(3);
-
-              // نضيف مسافة للنص والنتائج
-              resultsText += `${name}:\n${dist.toFixed(0)} متر / ${km} كم\n\n`;
-
-              // نرسم الخط على الخريطة
-              control.addTo(map);
-              routeControls.push(control);
-
-              // نص المسافة كنص بجانب نقطة الفرع
-              L.marker(target).addTo(map).bindTooltip(`${dist.toFixed(0)} م`, {
-                permanent: true,
-                direction: "right",
-                offset: L.point(10, 0),
-              });
-
-              // تخزين النتيجة
-              distanceResults.push({
-                name,
-                lat: coords[1],
-                lon: coords[0],
-                distance_m: dist.toFixed(0),
-                distance_km: km,
-              });
-
-              resolve();
-            })
-            .on("routingerror", function () {
-              // لو حصل خطأ في الحساب، نعطي مسافة صفر مع حذف الراوتر
-              map.removeControl(control);
-              resolve();
-            });
-        });
-      }
-
-      // نحسب كل المسارات بشكل متوازي بحد أقصى 4 طلبات
-      await asyncPool(4, branchFeatures, calculateRoute);
-
-      outputBox.textContent = resultsText;
-    });
-
-    // زر التصدير
-    document.getElementById("exportBtn").addEventListener("click", () => {
-      if (!distanceResults.length) {
-        alert("يرجى أولاً حساب المسافات.");
-        return;
-      }
-      const data = distanceResults.map((f) => ({
-        "اسم الفرع": f.name,
-        "الإحداثيات": `${f.lat.toFixed(6)}, ${f.lon.toFixed(6)}`,
-        "المسافة (متر)": f.distance_m,
-        "المسافة (كم)": f.distance_km,
-      }));
-      const ws = XLSX.utils.json_to_sheet(data);
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, "الفروع");
-      XLSX.writeFile(wb, "الفروع.xlsx");
-    });
-  </script>
 </body>
 </html>
