@@ -78,7 +78,6 @@ let branchFeatures = [];
 let branchLayer = null;
 let linesLayer = null;
 let distanceResults = [];
-let allGovernorates = new Set();
 
 function updateGovernorateOptionsFromGovernorateFile(geojson) {
   const select = document.getElementById("governorateFilter");
@@ -106,23 +105,211 @@ document.getElementById("govFile").addEventListener("change", e => {
   reader.readAsText(e.target.files[0]);
 });
 
-document.getElementById("governorateFilter").addEventListener("change", () => {
-  const selected = document.getElementById("governorateFilter").value;
+document.getElementById("mainFile").addEventListener("change", e => {
+  const reader = new FileReader();
+  reader.onload = () => {
+    const json = JSON.parse(reader.result);
+    if (json.features && json.features.length > 0) {
+      mainCenterCoords = json.features[0].geometry.coordinates;
+    } else {
+      alert("ملف المركز الرئيسي غير صحيح");
+    }
+  };
+  reader.readAsText(e.target.files[0]);
+});
+
+document.getElementById("branchFile").addEventListener("change", e => {
+  const reader = new FileReader();
+  reader.onload = () => {
+    const json = JSON.parse(reader.result);
+    branchFeatures = json.features;
+
+    if (branchLayer) map.removeLayer(branchLayer);
+    if (linesLayer) map.removeLayer(linesLayer);
+
+    branchLayer = L.geoJSON(branchFeatures, {
+      pointToLayer: function(feature, latlng) {
+        let isMainCenter = feature.properties.Name === "المركز الرئيسي للإدارة العامة";
+        return L.circleMarker(latlng, {
+          radius: 8,
+          fillColor: isMainCenter ? "blue" : "green",
+          color: "#000",
+          weight: 1,
+          opacity: 1,
+          fillOpacity: 0.9
+        });
+      },
+      onEachFeature: function(feature, layer) {
+        let name = feature.properties.Name || "بدون اسم";
+        let gov = feature.properties.Governorate || "غير معروفة";
+        layer.bindPopup(`<b>الفرع:</b> ${name}<br><b>المحافظة:</b> ${gov}`);
+      }
+    }).addTo(map);
+
+    map.fitBounds(branchLayer.getBounds());
+    document.getElementById("countBox").textContent = "عدد الفروع الظاهرة: " + branchFeatures.length;
+    distanceResults = [];
+  };
+  reader.readAsText(e.target.files[0]);
+});
+
+// دالة لتصفية الفروع حسب المحافظة والمسافة
+function filterBranches() {
   if (!branchLayer) return;
 
+  const selectedGov = document.getElementById("governorateFilter").value;
+  const maxDistance = parseFloat(document.getElementById("distanceFilter").value) * 1000;
+  const center = mainCenterCoords ? L.latLng(mainCenterCoords[1], mainCenterCoords[0]) : null;
+
+  if (!center) {
+    alert("يرجى رفع ملف المركز الرئيسي أولاً.");
+    return;
+  }
+
+  if (linesLayer) {
+    map.removeLayer(linesLayer);
+  }
+  linesLayer = L.layerGroup().addTo(map);
+
+  distanceResults = [];
+
   branchLayer.eachLayer(layer => {
-    const gov = layer.feature.properties.Governorate || "";
-    if (!selected || selected === gov) {
+    const feature = layer.feature;
+    const coords = feature.geometry.coordinates;
+    const latlng = L.latLng(coords[1], coords[0]);
+    const name = feature.properties.Name || "بدون اسم";
+    const gov = feature.properties.Governorate || "";
+
+    let dist = center.distanceTo(latlng);
+
+    // تحقق من شروط الفلترة
+    let passGov = !selectedGov || selectedGov === gov;
+    let passDist = isNaN(maxDistance) || dist <= maxDistance;
+
+    if (passGov && passDist) {
       layer.setStyle({ opacity: 1, fillOpacity: 0.9 });
       layer.addTo(map);
+
+      distanceResults.push({
+        name: name,
+        governorate: gov,
+        lat: coords[1],
+        lon: coords[0],
+        distance_m: dist.toFixed(0),
+        distance_km: (dist / 1000).toFixed(3)
+      });
+
+      // رسم الخطوط من المركز الرئيسي لكل فرع
+      const line = L.polyline([center, latlng], {color: "red", weight: 2, opacity: 0.7});
+      linesLayer.addLayer(line);
+
+      // عرض المسافة على الخريطة كنص بجانب النقطة
+      const distanceLabel = L.marker(latlng, {
+        icon: L.divIcon({
+          className: 'distance-label',
+          html: `<div style="background:white;padding:2px 5px;border:1px solid #aaa;border-radius:3px;font-size:12px;">${(dist/1000).toFixed(2)} كم</div>`
+        }),
+        interactive: false
+      });
+      linesLayer.addLayer(distanceLabel);
+
     } else {
       map.removeLayer(layer);
     }
   });
+
+  document.getElementById("countBox").textContent = "عدد الفروع الظاهرة: " + distanceResults.length;
+
+  let resultsText = "المسافات من المركز الرئيسي للإدارة العامة:\n\n";
+  distanceResults.forEach(r => {
+    resultsText += `${r.name} (${r.governorate}):\n${r.distance_m} متر / ${r.distance_km} كم\n\n`;
+  });
+  document.getElementById("distanceOutput").textContent = resultsText;
+}
+
+// زر حساب المسافات ورسم الخطوط
+document.getElementById("calcBtn").addEventListener("click", filterBranches);
+
+// زر أقرب فرع بناءً على موقع المستخدم
+document.getElementById("nearestBtn").addEventListener("click", () => {
+  if (!navigator.geolocation) {
+    alert("المتصفح لا يدعم تحديد الموقع.");
+    return;
+  }
+  if (branchFeatures.length === 0) {
+    alert("يرجى رفع ملف الفروع أولاً.");
+    return;
+  }
+
+  navigator.geolocation.getCurrentPosition(position => {
+    const userLoc = L.latLng(position.coords.latitude, position.coords.longitude);
+    let nearestFeature = null;
+    let minDistance = Infinity;
+
+    branchFeatures.forEach(f => {
+      let coords = f.geometry.coordinates;
+      let dist = userLoc.distanceTo(L.latLng(coords[1], coords[0]));
+      if (dist < minDistance) {
+        minDistance = dist;
+        nearestFeature = f;
+      }
+    });
+
+    if (nearestFeature) {
+      let coords = nearestFeature.geometry.coordinates;
+      let target = L.latLng(coords[1], coords[0]);
+
+      // إزالة السابق
+      if (window.nearestMarker) map.removeLayer(window.nearestMarker);
+      if (window.routingControl) map.removeControl(window.routingControl);
+
+      window.nearestMarker = L.marker(target).addTo(map)
+        .bindPopup(`أقرب فرع<br>المسافة: ${minDistance.toFixed(0)} م / ${(minDistance/1000).toFixed(2)} كم`)
+        .openPopup();
+
+      window.routingControl = L.Routing.control({
+        waypoints: [userLoc, target],
+        routeWhileDragging: false,
+        language: 'ar',
+        showAlternatives: false,
+        lineOptions: {
+          styles: [{ color: 'red', opacity: 0.9, weight: 5 }]
+        },
+        createMarker: () => null,
+        router: L.Routing.osrmv1({
+          serviceUrl: 'https://router.project-osrm.org/route/v1'
+        })
+      }).addTo(map);
+
+      map.fitBounds(L.latLngBounds([userLoc, target]).pad(0.3));
+    }
+  }, () => {
+    alert("تعذر تحديد الموقع.");
+  });
 });
 
-// زر PDF
+// زر تصدير Excel
+document.getElementById("exportBtn").addEventListener("click", () => {
+  if (distanceResults.length === 0) {
+    alert("لا توجد بيانات لتصديرها.");
+    return;
+  }
 
+  const exportData = distanceResults.map(f => ({
+    "اسم الفرع": f.name,
+    "المحافظة": f.governorate,
+    "الإحداثيات": `${f.lat.toFixed(6)}, ${f.lon.toFixed(6)}`,
+    "المسافة (متر)": f.distance_m,
+    "المسافة (كم)": f.distance_km
+  }));
+
+  let ws = XLSX.utils.json_to_sheet(exportData);
+  let wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "الفروع");
+  XLSX.writeFile(wb, "الفروع.xlsx");
+});
+
+// زر تصدير PDF
 document.getElementById("pdfBtn").addEventListener("click", () => {
   if (!distanceResults.length) {
     alert("لا توجد بيانات لتصديرها.");
@@ -147,5 +334,6 @@ document.getElementById("pdfBtn").addEventListener("click", () => {
   doc.save("المسافات.pdf");
 });
 </script>
+
 </body>
 </html>
