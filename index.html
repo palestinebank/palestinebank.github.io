@@ -57,6 +57,7 @@
   <label>رفع ملف الفروع:</label>
   <input type="file" id="branchFile" accept=".json" />
 
+  <button id="nearestBtn">أقرب فرع</button>
   <button id="distanceBtn">احسب المسافات وارسم الخطوط</button>
   <button id="exportBtn">تصدير إلى Excel</button>
 
@@ -80,169 +81,148 @@ let mainCenterCoords = null;
 let distanceResults = [];
 let routeControls = [];
 
-// تحميل المحافظات
+// المحافظات
 
 document.getElementById('govFile').addEventListener('change', function (e) {
   const file = e.target.files[0];
   if (!file) return;
   const reader = new FileReader();
   reader.onload = function (event) {
-    try {
-      const geojson = JSON.parse(event.target.result);
-      L.geoJSON(geojson, {
-        style: {
-          color: 'blue', weight: 2, fillOpacity: 0.1
-        }
-      }).addTo(map);
-    } catch (err) {
-      alert("خطأ في ملف المحافظات: " + err.message);
-    }
+    const geojson = JSON.parse(event.target.result);
+    L.geoJSON(geojson, { style: { color: 'blue', weight: 2, fillOpacity: 0.1 } }).addTo(map);
   };
   reader.readAsText(file);
 });
 
-// تحميل المركز الرئيسي
+// المركز الرئيسي
 
 document.getElementById('mainCenterFile').addEventListener('change', function (e) {
-  const file = e.target.files[0];
-  if (!file) return;
   const reader = new FileReader();
   reader.onload = function (event) {
-    try {
-      const json = JSON.parse(event.target.result);
-      if (!json.features || json.features.length === 0) {
-        alert("لا توجد بيانات في ملف المركز الرئيسي.");
-        return;
-      }
-      const feature = json.features[0];
-      mainCenterCoords = feature.geometry.coordinates;
-
-      L.circleMarker([mainCenterCoords[1], mainCenterCoords[0]], {
-        radius: 10, fillColor: "blue", color: "#000", weight: 2, opacity: 1, fillOpacity: 0.9
-      }).addTo(map).bindPopup("المركز الرئيسي للإدارة العامة").openPopup();
-
-      map.setView([mainCenterCoords[1], mainCenterCoords[0]], 10);
-
-    } catch (err) {
-      alert("خطأ في ملف المركز الرئيسي: " + err.message);
-    }
+    const json = JSON.parse(event.target.result);
+    const feature = json.features[0];
+    mainCenterCoords = feature.geometry.coordinates;
+    L.circleMarker([mainCenterCoords[1], mainCenterCoords[0]], {
+      radius: 10, fillColor: "blue", color: "#000", weight: 2, opacity: 1, fillOpacity: 0.9
+    }).addTo(map).bindPopup("المركز الرئيسي للإدارة العامة").openPopup();
+    map.setView([mainCenterCoords[1], mainCenterCoords[0]], 10);
   };
-  reader.readAsText(file);
+  reader.readAsText(e.target.files[0]);
 });
 
-// تحميل الفروع
+// الفروع
 
 document.getElementById('branchFile').addEventListener('change', function (e) {
-  const file = e.target.files[0];
-  if (!file) return;
   const reader = new FileReader();
   reader.onload = function (event) {
-    try {
-      const json = JSON.parse(event.target.result);
-      branchFeatures = json.features;
-      if (branchLayer) map.removeLayer(branchLayer);
-      branchLayer = L.geoJSON(branchFeatures, {
-        pointToLayer: function (feature, latlng) {
-          return L.circleMarker(latlng, {
-            radius: 8, fillColor: "green", color: "#000", weight: 1, opacity: 1, fillOpacity: 0.9
-          });
-        },
-        onEachFeature: function (feature, layer) {
-          let name = feature.properties["الاسم"] || "فرع بدون اسم";
-          layer.bindPopup(`<b>الفرع:</b> ${name}`);
-        }
-      }).addTo(map);
-
-      map.fitBounds(branchLayer.getBounds());
-      document.getElementById('countBox').textContent = "عدد الفروع الظاهرة: " + branchFeatures.length;
-
-    } catch (err) {
-      alert("خطأ في ملف الفروع: " + err.message);
-    }
+    const json = JSON.parse(event.target.result);
+    branchFeatures = json.features;
+    if (branchLayer) map.removeLayer(branchLayer);
+    branchLayer = L.geoJSON(branchFeatures, {
+      pointToLayer: (feature, latlng) => L.circleMarker(latlng, {
+        radius: 8, fillColor: "green", color: "#000", weight: 1, opacity: 1, fillOpacity: 0.9
+      }),
+      onEachFeature: (feature, layer) => {
+        const name = feature.properties["الاسم"] || "فرع بدون اسم";
+        layer.bindPopup(`<b>الفرع:</b> ${name}`);
+      }
+    }).addTo(map);
+    map.fitBounds(branchLayer.getBounds());
+    document.getElementById('countBox').textContent = "عدد الفروع الظاهرة: " + branchFeatures.length;
   };
-  reader.readAsText(file);
+  reader.readAsText(e.target.files[0]);
 });
 
-// حساب المسافات + رسم الخطوط
+// زر أقرب فرع
+
+document.getElementById('nearestBtn').addEventListener('click', function () {
+  if (!navigator.geolocation) return alert("المتصفح لا يدعم تحديد الموقع.");
+  if (!branchFeatures.length) return alert("يرجى رفع ملف الفروع أولاً.");
+
+  navigator.geolocation.getCurrentPosition(function (position) {
+    const userLoc = L.latLng(position.coords.latitude, position.coords.longitude);
+    let nearest = null;
+    let minDist = Infinity;
+
+    branchFeatures.forEach(f => {
+      const coords = f.geometry.coordinates;
+      const dist = userLoc.distanceTo([coords[1], coords[0]]);
+      if (dist < minDist) {
+        minDist = dist;
+        nearest = f;
+      }
+    });
+
+    if (nearest) {
+      const coords = nearest.geometry.coordinates;
+      const target = L.latLng(coords[1], coords[0]);
+      L.marker(target).addTo(map).bindPopup(`أقرب فرع<br>المسافة: ${minDist.toFixed(0)} م / ${(minDist/1000).toFixed(2)} كم`).openPopup();
+      L.Routing.control({
+        waypoints: [userLoc, target],
+        routeWhileDragging: false,
+        createMarker: () => null,
+        lineOptions: { styles: [{ color: 'red', opacity: 0.9, weight: 5 }] },
+        router: L.Routing.osrmv1({ serviceUrl: 'https://router.project-osrm.org/route/v1' })
+      }).addTo(map);
+    }
+  }, () => alert("تعذر تحديد الموقع."));
+});
+
+// زر المسافات
 
 document.getElementById('distanceBtn').addEventListener('click', function () {
   const outputBox = document.getElementById('distanceOutput');
-  if (!mainCenterCoords) {
-    outputBox.textContent = "لم يتم تحديد المركز الرئيسي.";
-    return;
-  }
+  if (!mainCenterCoords) return outputBox.textContent = "لم يتم تحديد المركز الرئيسي.";
 
   const center = L.latLng(mainCenterCoords[1], mainCenterCoords[0]);
   distanceResults = [];
   outputBox.textContent = "جاري الحساب...";
-
-  // حذف الخطوط السابقة
   routeControls.forEach(ctrl => map.removeControl(ctrl));
   routeControls = [];
 
-  let counter = 0;
-  let outputText = "المسافات من المركز الرئيسي:\n\n";
+  let i = 0;
+  let text = "المسافات من المركز الرئيسي:\n\n";
 
-  function drawNextRoute() {
-    if (counter >= branchFeatures.length) {
-      outputBox.textContent = outputText;
-      return;
-    }
+  function next() {
+    if (i >= branchFeatures.length) return outputBox.textContent = text;
 
-    const f = branchFeatures[counter++];
+    const f = branchFeatures[i++];
     const name = f.properties["الاسم"] || "فرع بدون اسم";
     const coords = f.geometry.coordinates;
     const target = L.latLng(coords[1], coords[0]);
 
-    const control = L.Routing.control({
+    const ctrl = L.Routing.control({
       waypoints: [center, target],
       routeWhileDragging: false,
-      language: 'ar',
       show: false,
       createMarker: () => null,
       lineOptions: { styles: [{ color: 'red', opacity: 0.8, weight: 4 }] },
       router: L.Routing.osrmv1({ serviceUrl: 'https://router.project-osrm.org/route/v1' })
-    }).on('routesfound', function (e) {
+    }).on('routesfound', e => {
       const dist = e.routes[0].summary.totalDistance;
-      const dist_km = (dist / 1000).toFixed(3);
-
-      outputText += `${name}:\n${dist.toFixed(0)} متر / ${dist_km} كم\n\n`;
-
+      const km = (dist / 1000).toFixed(3);
+      text += `${name}:\n${dist.toFixed(0)} متر / ${km} كم\n\n`;
       L.marker(target).addTo(map).bindTooltip(`${dist.toFixed(0)} م`, { permanent: true, direction: 'right' });
-
-      distanceResults.push({
-        name: name,
-        lat: coords[1],
-        lon: coords[0],
-        distance_m: dist.toFixed(0),
-        distance_km: dist_km
-      });
-
-      drawNextRoute();
+      distanceResults.push({ name, lat: coords[1], lon: coords[0], distance_m: dist.toFixed(0), distance_km: km });
+      next();
     }).addTo(map);
 
-    routeControls.push(control);
+    routeControls.push(ctrl);
   }
-
-  drawNextRoute();
+  next();
 });
 
-// تصدير Excel
+// زر التصدير
 
 document.getElementById('exportBtn').addEventListener('click', function () {
-  if (distanceResults.length === 0) {
-    alert("يرجى أولاً حساب المسافات.");
-    return;
-  }
-
-  const exportData = distanceResults.map(f => ({
+  if (!distanceResults.length) return alert("يرجى أولاً حساب المسافات.");
+  const data = distanceResults.map(f => ({
     "اسم الفرع": f.name,
     "الإحداثيات": `${f.lat.toFixed(6)}, ${f.lon.toFixed(6)}`,
     "المسافة (متر)": f.distance_m,
     "المسافة (كم)": f.distance_km
   }));
-
-  const ws = XLSX.utils.json_to_sheet(exportData);
+  const ws = XLSX.utils.json_to_sheet(data);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "الفروع");
   XLSX.writeFile(wb, "الفروع.xlsx");
